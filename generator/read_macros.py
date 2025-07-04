@@ -3,13 +3,13 @@ from pathlib import Path
 import component
 
 
-def load_component(comp_dict):
+def load_component(comp_dict, parent=None):
     """
     Recursively create a component.Component instance from a dict.
     """
     children = []
     if "children" in comp_dict:
-        children = [load_component(child) for child in comp_dict["children"]]
+        children = [load_component(child, parent=None) for child in comp_dict["children"]]  # we attach them below
 
     c = component.Component(
         name=comp_dict['name'],
@@ -18,8 +18,13 @@ def load_component(comp_dict):
         cad_operations=comp_dict['cad_operations'],
         quantity=comp_dict.get("quantity", 1),
         locations=comp_dict.get("locations"),
-        children=children
+        children=[],  # fill children below
+        parent=parent
     )
+
+    # attach children with proper parent
+    c.children = [load_component(child_dict, parent=c) for child_dict in comp_dict.get("children", [])]
+
     return c
 
 
