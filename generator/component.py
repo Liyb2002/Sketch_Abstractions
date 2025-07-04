@@ -1,5 +1,8 @@
 import random
 
+import build123.protocol
+
+
 class Component:
     def __init__(self, name, parameters, location, cad_operations, quantity=1, locations=None, children=None, parent=None):
         """
@@ -52,9 +55,46 @@ class Component:
         for child in self.children:
             child.describe(indent + 1)
 
+    def choose_parameters(self, parameters: dict) -> dict:
+        """
+        Randomly choose a value within each parameter's range.
+
+        :param parameters: dict of parameter: [min, max]
+        :return: dict of parameter: chosen_value
+        """
+        chosen = {}
+        for k, v in parameters.items():
+            val = random.uniform(v[0], v[1])
+            chosen[k] = round(val, 4)  # optionally round for readability
+        return chosen
+
     def build(self):
         """
-        Placeholder: build the shape using CAD library.
-        To be implemented later.
+        Build the shape of this component using build123d.
+        Only supports sketch_rectangle + extrude for now.
+        Returns: BuildPart canvas
         """
-        raise NotImplementedError("Build method not yet implemented.")
+        print(f"Building component: {self.name}")
+
+        width = self.chosen_parameters.get("width")
+        depth = self.chosen_parameters.get("depth")
+        thickness = self.chosen_parameters.get("thickness")
+
+        # Get absolute location
+        loc = self.absolute_locations[0]
+        x, y, z = loc["x"], loc["y"], loc["z"]
+
+        # Prepare the point list for the rectangle in 3D
+        half_w, half_d = width / 2, depth / 2
+        new_point_list = [
+            [ x - half_w, y - half_d, z ], [ x + half_w, y - half_d, z ],
+            [ x + half_w, y - half_d, z ], [ x + half_w, y + half_d, z ],
+            [ x + half_w, y + half_d, z ], [ x - half_w, y + half_d, z ],
+            [ x - half_w, y + half_d, z ], [ x - half_w, y - half_d, z ]
+        ]
+
+        prev_sketch = build123.protocol.build_sketch(0, None, new_point_list, False, None)
+
+        canvas = build123.protocol.build_extrude(0, None, prev_sketch, 1, False, None)
+        
+        return canvas
