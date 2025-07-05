@@ -68,33 +68,45 @@ class Component:
             chosen[k] = round(val, 4)  # optionally round for readability
         return chosen
 
-    def build(self):
+    def build_one_instance(self, idx, location, canvas=None):
         """
-        Build the shape of this component using build123d.
-        Only supports sketch_rectangle + extrude for now.
-        Returns: BuildPart canvas
+        Build one instance of this component at the given location.
         """
-        print(f"Building component: {self.name}")
+        print(f"Building {self.name} instance {idx+1}")
 
         width = self.chosen_parameters.get("width")
         depth = self.chosen_parameters.get("depth")
         thickness = self.chosen_parameters.get("thickness")
 
-        # Get absolute location
-        loc = self.absolute_locations[0]
-        x, y, z = loc["x"], loc["y"], loc["z"]
 
-        # Prepare the point list for the rectangle in 3D
+        x, y, z = location["x"], location["y"], location["z"]
+
         half_w, half_d = width / 2, depth / 2
         new_point_list = [
-            [ x - half_w, y - half_d, z ], [ x + half_w, y - half_d, z ],
-            [ x + half_w, y - half_d, z ], [ x + half_w, y + half_d, z ],
-            [ x + half_w, y + half_d, z ], [ x - half_w, y + half_d, z ],
-            [ x - half_w, y + half_d, z ], [ x - half_w, y - half_d, z ]
+            [x - half_w, y - half_d, z], [x + half_w, y - half_d, z],
+            [x + half_w, y - half_d, z], [x + half_w, y + half_d, z],
+            [x + half_w, y + half_d, z], [x - half_w, y + half_d, z],
+            [x - half_w, y + half_d, z], [x - half_w, y - half_d, z]
         ]
 
-        prev_sketch = build123.protocol.build_sketch(0, None, new_point_list, False, None)
+        sketch = build123.protocol.build_sketch(
+            idx, canvas, new_point_list, False, None
+        )
 
-        canvas = build123.protocol.build_extrude(0, None, prev_sketch, 1, False, None)
-        
+        canvas = build123.protocol.build_extrude(
+            idx, canvas, sketch, thickness, False, None
+        )
+
+        return canvas
+
+    def build(self, canvas=None):
+        """
+        Build this component and its children recursively.
+        """
+        for idx, loc in enumerate(self.absolute_locations):
+            canvas = self.build_one_instance(idx, loc, canvas)
+
+        for child in self.children:
+            canvas = child.build(canvas)
+
         return canvas
