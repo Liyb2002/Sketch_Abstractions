@@ -1,7 +1,7 @@
 import random
 
 import build123.protocol
-
+import re
 
 class Component:
     def __init__(self, name, parameters, location, cad_operations, quantity=1, locations=None, children=None, parent=None):
@@ -54,20 +54,19 @@ class Component:
             if isinstance(val, str):
                 expr = val.strip()
 
-                if expr.startswith("parent "):
-                    # expression refers to parent
-                    if not self.parent:
-                        raise ValueError(f"Location expression '{expr}' refers to parent but {self.name} has no parent.")
-                    expr = expr[len("parent "):]  # remove 'parent ' prefix
+                # Replace all 'parent param' with parent's parameter value
+                if self.parent:
+                    def replace_parent(match):
+                        param = match.group(1)
+                        if param not in self.parent.chosen_parameters:
+                            raise ValueError(f"Parent parameter '{param}' not found for {self.name}")
+                        return str(self.parent.chosen_parameters[param])
 
-                    # replace parent's parameters
-                    for param_name, param_value in self.parent.chosen_parameters.items():
-                        expr = expr.replace(param_name, str(param_value))
+                    expr = re.sub(r'parent\s+([a-zA-Z_]\w*)', replace_parent, expr)
 
-                else:
-                    # replace own parameters
-                    for param_name, param_value in self.chosen_parameters.items():
-                        expr = expr.replace(param_name, str(param_value))
+                # Replace own parameters
+                for param_name, param_value in self.chosen_parameters.items():
+                    expr = expr.replace(param_name, str(param_value))
 
                 try:
                     val = eval(expr)
@@ -151,7 +150,7 @@ class Component:
         """
 
         self.param_init()
-        
+
         for idx, loc in enumerate(self.absolute_locations):
             canvas = self.build_one_instance(idx, loc, canvas)
 
