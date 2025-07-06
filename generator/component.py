@@ -110,7 +110,7 @@ class Component:
         return chosen
 
 
-    def build_one_instance(self, idx, location, canvas=None):
+    def build_one_instance(self, idx, location, tempt_canvas):
         """
         Build one instance of this component at the given location.
         """
@@ -134,14 +134,14 @@ class Component:
 
         # Build sketch and extrude
         sketch = build123.protocol.build_sketch(
-            idx, canvas, new_point_list, False, None
+            idx, tempt_canvas, new_point_list, False, None
         )
 
-        canvas = build123.protocol.build_extrude(
-            idx, canvas, sketch, z_len, False, None
+        tempt_canvas = build123.protocol.build_extrude(
+            idx, tempt_canvas, sketch, z_len, False, None
         )
-
-        return canvas
+        
+        return tempt_canvas
 
 
     def build(self, canvas=None):
@@ -150,9 +150,12 @@ class Component:
         """
 
         self.param_init()
+        tempt_canvas = None
 
         for idx, loc in enumerate(self.absolute_locations):
-            canvas = self.build_one_instance(idx, loc, canvas)
+            tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
+
+        canvas = build123.protocol.merge_canvas(tempt_canvas, canvas)
 
         for child in self.children:
             canvas = child.build(canvas)

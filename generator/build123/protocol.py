@@ -2,6 +2,7 @@ from pathlib import Path
 from build123d import *
 import os
 import numpy as np
+from build123d import BuildPart, add
 
 
 def build_sketch(count, canvas, Points_list, output, data_dir, tempt_idx = 0):
@@ -127,18 +128,11 @@ def build_subtract(count, canvas, target_face, extrude_amount, output, data_dir)
     return canvas
 
 
-def build_fillet(count, canvas, target_edge, radius, output, data_dir):
-    stl_dir = os.path.join(data_dir, "canvas", f"vis_{count}.stl")
-    step_dir = os.path.join(data_dir, "canvas", f"brep_{count}.step")
+def build_fillet(canvas, target_edge, radius):
 
     with canvas:
         fillet(target_edge, radius)
     
-    if output:
-        _ = canvas.part.export_stl(stl_dir)
-        _ = canvas.part.export_step(step_dir)
-
-
     return canvas
 
 
@@ -163,7 +157,27 @@ def simulate_extrude(sketch, amount):
         extrude(sketch, amount=amount)
     return temp.part
 
+
 def has_volume_overlap(canvas, new_part):
     intersection = canvas & new_part
     return intersection.volume > new_part.volume * 0.5
 
+
+def get_part(obj):
+    """Extract the Part shape from a BuildPart or pass-through if already a Part."""
+    if hasattr(obj, "part"):
+        return obj.part
+    else:
+        return obj
+
+def merge_canvas(canvas1, canvas2):
+    parts = []
+    if canvas1 is not None:
+        parts.append(get_part(canvas1))
+    if canvas2 is not None:
+        parts.append(get_part(canvas2))
+
+    with BuildPart() as merged:
+        for part in parts:
+            add(part)
+    return merged
