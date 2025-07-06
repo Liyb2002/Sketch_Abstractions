@@ -149,7 +149,7 @@ class Component:
                     idx, tempt_canvas, sketch, z_len, False, None
                 )
 
-            elif op_name == "fillet":
+            elif op_name == "fillet_or_chamfer":
                 # Respect probability if specified
                 prob = op.get("probability", 1.0)
                 if random.random() > prob:
@@ -165,12 +165,21 @@ class Component:
 
                 # Get the actual edge objects from tempt_canvas
                 edges_in_canvas = tempt_canvas.edges()
-                for edge_idx in edge_indices:
-                    target_edge = edges_in_canvas[edge_idx]
-                    tempt_canvas = build123.protocol.build_fillet(
-                        tempt_canvas, target_edge, radius
-                    )
 
+                if random.random() > 0.5:
+                    for edge_idx in edge_indices:
+                        target_edge = edges_in_canvas[edge_idx]
+                        tempt_canvas = build123.protocol.build_fillet(
+                            tempt_canvas, target_edge, radius
+                        )
+                else:
+                    for edge_idx in edge_indices:
+                        target_edge = edges_in_canvas[edge_idx]
+                        tempt_canvas = build123.protocol.build_chamfer(
+                            tempt_canvas, target_edge, radius
+                        )
+
+                    
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
 
