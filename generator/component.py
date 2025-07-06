@@ -150,10 +150,9 @@ class Component:
                 )
 
             elif op_name == "fillet_or_chamfer":
-                # Respect probability if specified
                 prob = op.get("probability", 1.0)
                 if random.random() > prob:
-                    print(f"Skipping fillet on {self.name} instance {idx+1} (probability={prob})")
+                    print(f"Skipping fillet/chamfer on {self.name} instance {idx+1} (probability={prob})")
                     continue
 
                 params = op.get("parameters", {})
@@ -161,9 +160,8 @@ class Component:
                 edge_indices = params.get("edges", [])
 
                 if tempt_canvas is None:
-                    raise RuntimeError(f"Cannot fillet: no geometry generated for {self.name}")
+                    raise RuntimeError(f"Cannot fillet/chamfer: no geometry for {self.name}")
 
-                # Get the actual edge objects from tempt_canvas
                 edges_in_canvas = tempt_canvas.edges()
 
                 if random.random() > 0.5:
@@ -179,11 +177,78 @@ class Component:
                             tempt_canvas, target_edge, radius
                         )
 
-                    
+            elif op_name == "subtraction":
+                prob = op.get("probability", 1.0)
+                if random.random() > prob:
+                    print(f"Skipping subtraction on {self.name} instance {idx+1} (probability={prob})")
+                    continue
+
+                params = op.get("parameters", {})
+                shape_choices = params.get("shape", ["square", "triangle", "cylinder"])
+                shape_details = params.get("shape_details", {})
+                chosen_shape = random.choice(shape_choices)
+                print(f"Performing subtraction with shape: {chosen_shape}")
+
+                details = shape_details.get(chosen_shape, {})
+
+                if chosen_shape == "square":
+                    # size: [x_length * 0.5, z_length * 0.5]
+                    square_width = x_len * 0.5
+                    square_height = z_len * 0.5
+                    half_square_w = square_width / 2
+                    half_square_h = square_height / 2
+                    square_points = [
+                        [x - half_square_w, y - half_square_h, z],
+                        [x + half_square_w, y - half_square_h, z],
+                        [x + half_square_w, y - half_square_h, z],
+                        [x + half_square_w, y + half_square_h, z],
+                        [x + half_square_w, y + half_square_h, z],
+                        [x - half_square_w, y + half_square_h, z],
+                        [x - half_square_w, y + half_square_h, z],
+                        [x - half_square_w, y - half_square_h, z]
+                    ]
+                    subtract_sketch = build123.protocol.build_sketch(
+                        idx, tempt_canvas, square_points, False, None
+                    )
+
+                elif chosen_shape == "triangle":
+                    # size: [x_length * 0.33, z_length * 0.33]
+                    tri_w = x_len * 0.33
+                    tri_h = z_len * 0.33
+                    half_tri_w = tri_w / 2
+                    half_tri_h = tri_h / 2
+                    tri_points = [
+                        [x, y - half_tri_h, z],
+                        [x + half_tri_w, y + half_tri_h, z],
+                        [x - half_tri_w, y + half_tri_h, z]
+                    ]
+                    subtract_sketch = build123.protocol.build_sketch(
+                        idx, tempt_canvas, tri_points, False, None
+                    )
+
+                elif chosen_shape == "cylinder":
+                    # radius: y_length * 0.5
+                    cyl_radius = y_len * 0.5
+                    subtract_sketch = build123.protocol.build_circle(
+                        radius=cyl_radius,
+                        center=[x, y, z],
+                        normal=[0, 0, 1]
+                    )
+
+                else:
+                    raise ValueError(f"Unsupported subtraction shape: {chosen_shape}")
+
+                # Perform subtraction
+                subtract_height = z_len / 2  # configurable if needed
+                tempt_canvas = build123.protocol.build_subtract(
+                    tempt_canvas, subtract_sketch, subtract_height
+                )
+
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
 
         return tempt_canvas
+
 
 
     def build(self, canvas=None):
