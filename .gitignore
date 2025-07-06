@@ -1,2 +1,4 @@
 /generator/macros
+*.stl
+*.step
 /macros

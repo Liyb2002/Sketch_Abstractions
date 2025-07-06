@@ -4,29 +4,24 @@ import build123.protocol
 import re
 
 class Component:
-    def __init__(self, name, parameters, location, cad_operations, quantity=1, locations=None, children=None, parent=None):
+    def __init__(self, json_path, parent=None):
         """
-        Represents a component of a macro.
-
-        :param name: Name of the component
-        :param parameters: Dict of parameter ranges
-        :param location: Default relative location (dict)
-        :param cad_operations: List of CAD operations
-        :param quantity: Number of this component
-        :param locations: Optional list of relative locations (one per instance)
-        :param children: List of child Components
-        :param parent: Parent Component instance
+        Initializes the component from its JSON file.
+        :param json_path: Path to the JSON file for this component.
+        :param parent: Parent Component
         """
-        self.name = name
+        import json
         self.parent = parent
-        self.cad_operations = cad_operations
-        self.quantity = quantity
-        self.children = children if children else []
+        self.children = []
+        with open(json_path, 'r') as f:
+            data = json.load(f)
 
-        self.parameters = parameters
-        self.quantity = quantity
-        self.location = location
-        self.locations = locations
+        self.name = data['name']
+        self.parameters = data['parameters']
+        self.location = data.get('location')
+        self.cad_operations = data['cad_operations']
+        self.quantity = data.get('quantity', 1)
+        self.locations = data.get('locations')
 
 
     def param_init(self):
