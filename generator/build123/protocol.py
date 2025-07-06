@@ -129,10 +129,9 @@ def build_subtract(count, canvas, target_face, extrude_amount, output, data_dir)
 
 
 def build_fillet(canvas, target_edge, radius):
-
     with canvas:
         fillet(target_edge, radius)
-    
+
     return canvas
 
 

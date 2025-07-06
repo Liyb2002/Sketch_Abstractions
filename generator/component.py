@@ -112,7 +112,7 @@ class Component:
 
     def build_one_instance(self, idx, location, tempt_canvas):
         """
-        Build one instance of this component at the given location.
+        Build one instance of this component at the given location, following cad_operations.
         """
         print(f"Building {self.name} instance {idx+1}")
 
@@ -132,15 +132,48 @@ class Component:
             [x - half_x, y + half_y, z], [x - half_x, y - half_y, z]
         ]
 
-        # Build sketch and extrude
-        sketch = build123.protocol.build_sketch(
-            idx, tempt_canvas, new_point_list, False, None
-        )
+        sketch = None  # for reference during operations
 
-        tempt_canvas = build123.protocol.build_extrude(
-            idx, tempt_canvas, sketch, z_len, False, None
-        )
-        
+        for op in self.cad_operations:
+            op_name = op["name"]
+
+            if op_name == "sketch_rectangle":
+                sketch = build123.protocol.build_sketch(
+                    idx, tempt_canvas, new_point_list, False, None
+                )
+
+            elif op_name == "extrude":
+                if sketch is None:
+                    raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
+                tempt_canvas = build123.protocol.build_extrude(
+                    idx, tempt_canvas, sketch, z_len, False, None
+                )
+
+            elif op_name == "fillet":
+                # Respect probability if specified
+                prob = op.get("probability", 1.0)
+                if random.random() > prob:
+                    print(f"Skipping fillet on {self.name} instance {idx+1} (probability={prob})")
+                    continue
+
+                params = op.get("parameters", {})
+                radius = params.get("radius", 0.01)
+                edge_indices = params.get("edges", [])
+
+                if tempt_canvas is None:
+                    raise RuntimeError(f"Cannot fillet: no geometry generated for {self.name}")
+
+                # Get the actual edge objects from tempt_canvas
+                edges_in_canvas = tempt_canvas.edges()
+                for edge_idx in edge_indices:
+                    target_edge = edges_in_canvas[edge_idx]
+                    tempt_canvas = build123.protocol.build_fillet(
+                        tempt_canvas, target_edge, radius
+                    )
+
+            else:
+                raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
+
         return tempt_canvas
 
 
