@@ -135,13 +135,23 @@ class Component:
                 radius = x_len / 2
                 center = [x,y,z]
 
+
                 normal_axis = self.chosen_parameters.get("normal", ["z"])[0]  # default to z
+                if normal_axis.startswith("-"):
+                    axis = normal_axis[1:]
+                    sign = -1
+                else:
+                    axis = normal_axis
+                    sign = 1
+
                 normal_lookup = {
                     "x": [1, 0, 0],
                     "y": [0, 1, 0],
                     "z": [0, 0, 1]
                 }
-                normal = normal_lookup.get(normal_axis, [0, 0, 1])  # fallback to z if unknown
+
+                base_normal = normal_lookup.get(axis, [0, 0, 1])  # fallback to z if unknown
+                normal = [sign * n for n in base_normal]
 
 
                 sketch = build123.protocol.build_circle(
