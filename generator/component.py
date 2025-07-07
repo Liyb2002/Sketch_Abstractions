@@ -195,11 +195,11 @@ class Component:
                             tempt_canvas, target_edge, radius
                         )
 
-            elif op_name == "subtraction":
+            elif op_name == "add" or "subtract":
                 sub_params = op.get("sub_parameters", {})
                 parameters = sub_params.get("parameters", sub_params)  # fallback
                 shape_details = parameters["shape_details"]
-                chosen_shape = parameters["shape"][0]  # assuming always 1 shape
+                chosen_shape = random.choice(parameters["shape"])
 
                 detail = shape_details[chosen_shape]
 
@@ -284,9 +284,15 @@ class Component:
                     raise ValueError(f"Unsupported subtraction shape: {chosen_shape}")
 
 
-                tempt_canvas = build123.protocol.build_subtract(
-                    tempt_canvas, subtract_sketch, subtract_height
-                )
+                if op_name == "subtract":
+                    tempt_canvas = build123.protocol.build_subtract(
+                        tempt_canvas, subtract_sketch, subtract_height
+                    )
+                else:
+                    tempt_canvas = build123.protocol.build_extrude(
+                        tempt_canvas, subtract_sketch, subtract_height
+                    )
+
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
 

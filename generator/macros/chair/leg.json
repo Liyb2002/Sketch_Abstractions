@@ -3,98 +3,64 @@
   "parent": "seat",
   "variants": [
 
-     {
-      "name": "rectangle_leg",
-      "parameters": {
-        "x_length": [0.01, 0.05],
-        "y_length": [0.01, 0.05],
-        "z_length": [0.3, 0.6]
-      },
-      "quantity": 4,
-      "locations": [
-        {
-          "x": "-parent x_length / 2 + x_length / 2",
-          "y": "-parent y_length / 2 + y_length / 2",
-          "z": "-z_length"
-        },
-        {
-          "x": "parent x_length / 2 - x_length / 2",
-          "y": "-parent y_length / 2 + y_length / 2",
-          "z": "-z_length"
-        },
-        {
-          "x": "-parent x_length / 2 + x_length / 2",
-          "y": "parent y_length / 2 - y_length / 2",
-          "z": "-z_length"
-        },
-        {
-          "x": "parent x_length / 2 - x_length / 2",
-          "y": "parent y_length / 2 - y_length / 2",
-          "z": "-z_length"
-        }
-      ],
-      "cad_operations": [
-        { "name": "sketch_rectangle" },
-        { "name": "extrude" }
-      ]
-    },
-
-   {
-      "name": "cylindrical_leg",
-      "parameters": {
-        "x_length": [0.01, 0.05],
-        "y_length": [0.01, 0.05],
-        "z_length": [0.3, 0.6],
-        "normal": ["z"]
-      },
-      "quantity": 4,
-      "locations": [
-        {
-          "x": "-parent x_length / 2 + x_length / 2",
-          "y": "-parent y_length / 2 + y_length / 2",
-          "z": "-z_length"
-        },
-        {
-          "x": "parent x_length / 2 - x_length / 2",
-          "y": "-parent y_length / 2 + y_length / 2",
-          "z": "-z_length"
-        },
-        {
-          "x": "-parent x_length / 2 + x_length / 2",
-          "y": "parent y_length / 2 - y_length / 2",
-          "z": "-z_length"
-        },
-        {
-          "x": "parent x_length / 2 - x_length / 2",
-          "y": "parent y_length / 2 - y_length / 2",
-          "z": "-z_length"
-        }
-      ],
-      "cad_operations": [
-        { "name": "sketch_circle" },
-        { "name": "extrude" }
-      ]
+{
+  "name": "single_cylindrical_base",
+  "parameters": {
+    "x_length": [0.1, 0.2],
+    "y_length": [0.1, 0.2],
+    "z_length": [0.3, 0.6],
+    "normal": ["-z"]
+  },
+  "quantity": 1,
+  "locations": [
+    {
+      "x": 0,
+      "y": 0,
+      "z": "z_length"
+    }
+  ],
+  "cad_operations": [
+    {
+      "name": "sketch_circle"
     },
     {
-      "name": "single_cylindrical_base",
-      "parameters": {
-        "x_length": [0.3, 0.6],
-        "y_length": [0.3, 0.6],
-        "z_length": [0.3, 0.6],
-        "normal": ["-z"]
-      },
-      "quantity": 1,
-      "locations": [
-        {
-          "x": 0,
-          "y": 0,
-          "z": "z_length"
+      "name": "extrude"
+    },
+    {
+      "name": "add",
+      "probability": 0.8,
+      "sub_parameters": {
+        "shape": ["square", "triangle", "cylinder"],
+        "shape_details": {
+          "square": {
+            "location": { "x": 0, "y": 0, "z": "-z_length" },
+            "size": [
+              "x_length * [1.2, 1.8]",
+              0,
+              "z_length * [0.1, 0.3]"
+            ]
+          },
+          "triangle": {
+            "location": { "x": 0, "y": 0, "z": "-z_length" },
+            "size": [
+              "x_length * [1.2, 1.8]",
+              0,
+              "z_length * [0.1, 0.3]"
+            ]
+          },
+          "cylinder": {
+            "location": { "x": 0, "y": -0.1, "z": "-z_length * 1.2" },
+            "radius": "y_length * [0.7, 1.2]",
+            "size": ["radius", "radius", 0]
+          }
         }
-      ],
-      "cad_operations": [
-        { "name": "sketch_circle" },
-        { "name": "extrude" }
-      ]
+      }
     }
+  ]
+}
+
+
+
+
   ]
 }

@@ -26,10 +26,10 @@
           }
         },
         {
-          "name": "subtraction",
-          "probability": 1.0,
+          "name": "subtract",
+          "probability": 0.8,
           "sub_parameters": {
-            "shape": ["triangle"],
+            "shape": ["square", "triangle", "cylinder"],
             "shape_details": {
               "square": {
                 "location": { "x": 0, "y": 0, "z": "z_length / 2" },
