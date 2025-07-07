@@ -185,7 +185,27 @@ class Component:
 
                 detail = shape_details[chosen_shape]
 
+                # Base center of the solid
                 center = [x, y, z]
+
+                # Safe context for eval
+                context = {
+                    "x_length": x_len,
+                    "y_length": y_len,
+                    "z_length": z_len
+                }
+
+                # Adjust center based on shape-specific location
+                location = detail.get("location", {"x": 0, "y": 0, "z": 0})
+                offset_x = eval(str(location.get("x", 0)), {}, context)
+                offset_y = eval(str(location.get("y", 0)), {}, context)
+                offset_z = eval(str(location.get("z", 0)), {}, context)
+
+                adjusted_center = [
+                    center[0] + offset_x,
+                    center[1] + offset_y,
+                    center[2] + offset_z
+                ]
 
                 size = detail["size"]
                 plane_normal = [0, 0, 0]
@@ -193,24 +213,18 @@ class Component:
                     if val == 0:
                         plane_normal[idx2] = 1  # normal to axis with 0 extent
 
-                subtract_height = z_len
-
-                # safe context for eval
-                context = {
-                    "x_length": x_len,
-                    "y_length": y_len,
-                    "z_length": z_len
-                }
+                subtract_height = z_len / 2  # or configurable
 
                 if chosen_shape == "triangle":
                     x_size = eval(str(size[0]), {}, context)
                     z_size = eval(str(size[2]), {}, context)
 
-                    # Triangle points in X-Z plane
+                    half_x, half_z = x_size / 2, z_size / 2
+
                     Points_list = [
-                        [center[0] - x_size, center[1], center[2] - z_size],
-                        [center[0] + x_size, center[1], center[2] - z_size],
-                        [center[0],          center[1], center[2] + z_size]
+                        [adjusted_center[0] - half_x, adjusted_center[1], adjusted_center[2] - half_z],
+                        [adjusted_center[0] + half_x, adjusted_center[1], adjusted_center[2] - half_z],
+                        [adjusted_center[0],          adjusted_center[1], adjusted_center[2] + half_z]
                     ]
 
                     subtract_sketch = build123.protocol.build_sketch(
@@ -224,10 +238,10 @@ class Component:
                     half_x, half_z = x_size / 2, z_size / 2
 
                     Points_list = [
-                        [center[0] - half_x, center[1], center[2] - half_z],
-                        [center[0] + half_x, center[1], center[2] - half_z],
-                        [center[0] + half_x, center[1], center[2] + half_z],
-                        [center[0] - half_x, center[1], center[2] + half_z]
+                        [adjusted_center[0] - half_x, adjusted_center[1], adjusted_center[2] - half_z],
+                        [adjusted_center[0] + half_x, adjusted_center[1], adjusted_center[2] - half_z],
+                        [adjusted_center[0] + half_x, adjusted_center[1], adjusted_center[2] + half_z],
+                        [adjusted_center[0] - half_x, adjusted_center[1], adjusted_center[2] + half_z]
                     ]
 
                     subtract_sketch = build123.protocol.build_sketch(
@@ -236,18 +250,21 @@ class Component:
 
                 elif chosen_shape == "cylinder":
                     dims = [x_len, y_len, z_len]
-                    radius = random.choice(dims) * 0.5
+                    radius_expr = detail.get("radius", None)
+                    if radius_expr:
+                        radius = eval(str(radius_expr), {}, context)
+                    else:
+                        radius = random.choice(dims) * 0.5
 
                     subtract_sketch = build123.protocol.build_circle(
                         radius=radius,
-                        center=center,
+                        center=adjusted_center,
                         normal=plane_normal
                     )
 
                 else:
                     raise ValueError(f"Unsupported subtraction shape: {chosen_shape}")
 
-                # Perform subtraction
 
                 tempt_canvas = build123.protocol.build_subtract(
                     tempt_canvas, subtract_sketch, subtract_height
