@@ -113,18 +113,6 @@ class Component:
 
         x, y, z = location["x"], location["y"], location["z"]
 
-        half_x, half_y = x_len / 2, y_len / 2
-
-        # Define rectangle perimeter points in XY plane at z
-        new_point_list = [
-            [x - half_x, y - half_y, z],
-            [x + half_x, y - half_y, z],
-            [x + half_x, y + half_y, z],
-            [x - half_x, y + half_y, z]
-        ]
-
-        sketch = None  # for reference during operations
-
         # context for eval()
         context = {
             "x_length": x_len,
@@ -136,8 +124,25 @@ class Component:
             op_name = op["name"]
 
             if op_name == "sketch_rectangle":
+                half_x, half_y = x_len / 2, y_len / 2
+                new_point_list = [
+                    [x - half_x, y - half_y, z],
+                    [x + half_x, y - half_y, z],
+                    [x + half_x, y + half_y, z],
+                    [x - half_x, y + half_y, z]
+                ]
                 sketch = build123.protocol.build_sketch(
                     tempt_canvas, new_point_list
+                )
+            
+            elif op_name == "sketch_circle":
+                radius = x_len / 2
+                center = [x,y,z]
+                normal = [0, 0, 1]
+
+
+                sketch = build123.protocol.build_circle(
+                    radius, center, normal
                 )
 
             elif op_name == "extrude":
