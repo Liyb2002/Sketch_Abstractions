@@ -235,11 +235,8 @@ class Component:
                     )
 
                 elif chosen_shape == "cylinder":
-                    radius_expr = detail.get("radius", size[0])
-                    if radius_expr == "radius":
-                        radius = eval(str(size[0]), {}, context)
-                    else:
-                        radius = eval(str(radius_expr), {}, context)
+                    dims = [x_len, y_len, z_len]
+                    radius = random.choice(dims) * 0.5
 
                     subtract_sketch = build123.protocol.build_circle(
                         radius=radius,
