@@ -1,0 +1,8 @@
+{
+  "name": "simple_chair",
+  "components": [
+    "seat",
+    "backrest",
+    "leg"
+  ]
+}

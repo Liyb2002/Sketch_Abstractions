@@ -1,0 +1,26 @@
+{
+  "name": "seat",
+  "variants": [
+    {
+      "name": "standard_seat",
+      "parameters": {
+        "x_length": [0.3, 0.5],
+        "y_length": [0.3, 0.5],
+        "z_length": [0.015, 0.1]
+      },
+      "location": { "x": 0, "y": 0, "z": 0 },
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 0.8,
+          "sub_parameters": {
+            "radius": "[0.01, 0.04]",
+            "edges": [3]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,23 +1,38 @@
 import json
 from pathlib import Path
 import component
+import random
 
-
-def load_component(comp_dict, parent=None):
+def load_component(json_path, parent=None):
     """
-    Recursively create a component.Component instance from a dict.
+    Reads JSON file, picks a variant if any, and returns a Component instance.
     """
-    c = component.Component(
-        name=comp_dict['name'],
-        parameters=comp_dict['parameters'],
-        location=comp_dict.get('location'),
-        cad_operations=comp_dict['cad_operations'],
-        quantity=comp_dict.get("quantity", 1),
-        locations=comp_dict.get("locations"),
-        children=[],  # will fill later
-        parent=parent
-    )
+    with open(json_path, 'r') as f:
+        comp_dict = json.load(f)
 
+    # If component has variants, choose one
+    if 'variants' in comp_dict:
+        import random
+        variant = random.choice(comp_dict['variants'])
+        data = {
+            'name': variant.get('name', comp_dict['name']),
+            'parameters': variant['parameters'],
+            'location': variant.get('location'),
+            'cad_operations': variant['cad_operations'],
+            'quantity': variant.get("quantity", 1),
+            'locations': variant.get("locations")
+        }
+    else:
+        data = {
+            'name': comp_dict['name'],
+            'parameters': comp_dict['parameters'],
+            'location': comp_dict.get('location'),
+            'cad_operations': comp_dict['cad_operations'],
+            'quantity': comp_dict.get("quantity", 1),
+            'locations': comp_dict.get("locations")
+        }
+
+    c = component.Component(data, parent=parent)
     return c
 
 
@@ -36,7 +51,7 @@ def read_macro(folder_path):
     # load all components
     for name in component_names:
         json_file = folder_path / f"{name}.json"
-        c = component.Component(json_file)
+        c = load_component(json_file)
         name_to_component[name] = c
 
     # set parents and children

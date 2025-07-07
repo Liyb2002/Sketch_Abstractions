@@ -5,17 +5,14 @@ import re
 import helper
 
 class Component:
-    def __init__(self, json_path, parent=None):
+    def __init__(self, data: dict, parent=None):
         """
-        Initializes the component from its JSON file.
-        :param json_path: Path to the JSON file for this component.
+        Initializes the component from its chosen variant dict.
+        :param data: dict of chosen variant
         :param parent: Parent Component
         """
-        import json
         self.parent = parent
         self.children = []
-        with open(json_path, 'r') as f:
-            data = json.load(f)
 
         self.name = data['name']
         self.parameters = data['parameters']

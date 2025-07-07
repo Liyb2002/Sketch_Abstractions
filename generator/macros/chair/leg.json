@@ -1,0 +1,94 @@
+{
+  "name": "leg",
+  "parent": "seat",
+  "variants": [
+    {
+      "name": "rectangular_leg",
+      "parameters": {
+        "x_length": [0.05, 0.1],
+        "y_length": [0.05, 0.1],
+        "z_length": [0.3, 0.6]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x": "-parent x_length / 2 + x_length / 2",
+          "y": "-parent y_length / 2 + y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - x_length / 2",
+          "y": "-parent y_length / 2 + y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "-parent x_length / 2 + x_length / 2",
+          "y": "parent y_length / 2 - y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - x_length / 2",
+          "y": "parent y_length / 2 - y_length / 2",
+          "z": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" }
+      ]
+    },
+    {
+      "name": "cylindrical_leg",
+      "parameters": {
+        "radius": [0.025, 0.05],
+        "z_length": [0.3, 0.6]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x": "-parent x_length / 2 + radius",
+          "y": "-parent y_length / 2 + radius",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - radius",
+          "y": "-parent y_length / 2 + radius",
+          "z": "-z_length"
+        },
+        {
+          "x": "-parent x_length / 2 + radius",
+          "y": "parent y_length / 2 - radius",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - radius",
+          "y": "parent y_length / 2 - radius",
+          "z": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+      ]
+    },
+    {
+      "name": "cylindrical_base",
+      "parameters": {
+        "radius": [0.1, 0.2],
+        "z_length": [0.3, 0.6]
+      },
+      "quantity": 1,
+      "locations": [
+        {
+          "x": 0,
+          "y": 0,
+          "z": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+      ]
+    }
+  ]
+}
