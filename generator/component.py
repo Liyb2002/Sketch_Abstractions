@@ -2,6 +2,7 @@ import random
 
 import build123.protocol
 import re
+import helper
 
 class Component:
     def __init__(self, json_path, parent=None):
@@ -156,8 +157,10 @@ class Component:
                     continue
 
                 sub_params = op.get("sub_parameters", {})
-                radius = sub_params.get("radius", 0.01)
+                radius_expr = sub_params.get("radius", 0.01)
                 edge_indices = sub_params.get("edges", [])
+                radius = helper.eval_with_range(str(radius_expr), {})
+
 
                 if tempt_canvas is None:
                     raise RuntimeError(f"Cannot fillet/chamfer: no geometry for {self.name}")
@@ -216,8 +219,8 @@ class Component:
                 subtract_height = z_len / 2  # or configurable
 
                 if chosen_shape == "triangle":
-                    x_size = eval(str(size[0]), {}, context)
-                    z_size = eval(str(size[2]), {}, context)
+                    x_size = helper.eval_with_range(str(size[0]), context)
+                    z_size = helper.eval_with_range(str(size[2]), context)
 
                     half_x, half_z = x_size / 2, z_size / 2
 
@@ -232,8 +235,8 @@ class Component:
                     )
 
                 elif chosen_shape == "square":
-                    x_size = eval(str(size[0]), {}, context)
-                    z_size = eval(str(size[2]), {}, context)
+                    x_size = helper.eval_with_range(str(size[0]), context)
+                    z_size = helper.eval_with_range(str(size[2]), context)
 
                     half_x, half_z = x_size / 2, z_size / 2
 
@@ -252,7 +255,7 @@ class Component:
                     dims = [x_len, y_len, z_len]
                     radius_expr = detail.get("radius", None)
                     if radius_expr:
-                        radius = eval(str(radius_expr), {}, context)
+                        radius = helper.eval_with_range(str(radius_expr), context)
                     else:
                         radius = random.choice(dims) * 0.5
 
