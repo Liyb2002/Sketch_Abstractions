@@ -109,8 +109,6 @@ class Component:
         """
         Build one instance of this component at the given location, following cad_operations.
         """
-        print(f"Building {self.name} instance {idx+1}")
-
         x_len = self.chosen_parameters.get("x_length")
         y_len = self.chosen_parameters.get("y_length")
         z_len = self.chosen_parameters.get("z_length")
@@ -121,27 +119,34 @@ class Component:
 
         # Define rectangle perimeter points in XY plane at z
         new_point_list = [
-            [x - half_x, y - half_y, z], [x + half_x, y - half_y, z],
-            [x + half_x, y - half_y, z], [x + half_x, y + half_y, z],
-            [x + half_x, y + half_y, z], [x - half_x, y + half_y, z],
-            [x - half_x, y + half_y, z], [x - half_x, y - half_y, z]
+            [x - half_x, y - half_y, z],
+            [x + half_x, y - half_y, z],
+            [x + half_x, y + half_y, z],
+            [x - half_x, y + half_y, z]
         ]
 
         sketch = None  # for reference during operations
+
+        # context for eval()
+        context = {
+            "x_length": x_len,
+            "y_length": y_len,
+            "z_length": z_len
+        }
 
         for op in self.cad_operations:
             op_name = op["name"]
 
             if op_name == "sketch_rectangle":
                 sketch = build123.protocol.build_sketch(
-                    idx, tempt_canvas, new_point_list, False, None
+                    tempt_canvas, new_point_list
                 )
 
             elif op_name == "extrude":
                 if sketch is None:
                     raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
                 tempt_canvas = build123.protocol.build_extrude(
-                    idx, tempt_canvas, sketch, z_len, False, None
+                    tempt_canvas, sketch, z_len
                 )
 
             elif op_name == "fillet_or_chamfer":
@@ -150,9 +155,9 @@ class Component:
                     print(f"Skipping fillet/chamfer on {self.name} instance {idx+1} (probability={prob})")
                     continue
 
-                params = op.get("parameters", {})
-                radius = params.get("radius", 0.01)
-                edge_indices = params.get("edges", [])
+                sub_params = op.get("sub_parameters", {})
+                radius = sub_params.get("radius", 0.01)
+                edge_indices = sub_params.get("edges", [])
 
                 if tempt_canvas is None:
                     raise RuntimeError(f"Cannot fillet/chamfer: no geometry for {self.name}")
@@ -173,72 +178,83 @@ class Component:
                         )
 
             elif op_name == "subtraction":
-                prob = op.get("probability", 1.0)
-                if random.random() > prob:
-                    print(f"Skipping subtraction on {self.name} instance {idx+1} (probability={prob})")
-                    continue
+                sub_params = op.get("sub_parameters", {})
+                parameters = sub_params.get("parameters", sub_params)  # fallback
+                shape_details = parameters["shape_details"]
+                chosen_shape = parameters["shape"][0]  # assuming always 1 shape
 
-                params = op.get("parameters", {})
-                shape_choices = params.get("shape", ["square", "triangle", "cylinder"])
-                shape_details = params.get("shape_details", {})
-                chosen_shape = random.choice(shape_choices)
-                print(f"Performing subtraction with shape: {chosen_shape}")
+                detail = shape_details[chosen_shape]
 
-                details = shape_details.get(chosen_shape, {})
+                center = [x, y, z]
 
-                if chosen_shape == "square":
-                    # size: [x_length * 0.5, z_length * 0.5]
-                    square_width = x_len * 0.5
-                    square_height = z_len * 0.5
-                    half_square_w = square_width / 2
-                    half_square_h = square_height / 2
-                    square_points = [
-                        [x - half_square_w, y - half_square_h, z],
-                        [x + half_square_w, y - half_square_h, z],
-                        [x + half_square_w, y - half_square_h, z],
-                        [x + half_square_w, y + half_square_h, z],
-                        [x + half_square_w, y + half_square_h, z],
-                        [x - half_square_w, y + half_square_h, z],
-                        [x - half_square_w, y + half_square_h, z],
-                        [x - half_square_w, y - half_square_h, z]
+                size = detail["size"]
+                plane_normal = [0, 0, 0]
+                for idx2, val in enumerate(size):
+                    if val == 0:
+                        plane_normal[idx2] = 1  # normal to axis with 0 extent
+
+                subtract_height = z_len
+
+                # safe context for eval
+                context = {
+                    "x_length": x_len,
+                    "y_length": y_len,
+                    "z_length": z_len
+                }
+
+                if chosen_shape == "triangle":
+                    x_size = eval(str(size[0]), {}, context)
+                    z_size = eval(str(size[2]), {}, context)
+
+                    # Triangle points in X-Z plane
+                    Points_list = [
+                        [center[0] - x_size, center[1], center[2] - z_size],
+                        [center[0] + x_size, center[1], center[2] - z_size],
+                        [center[0],          center[1], center[2] + z_size]
                     ]
+
                     subtract_sketch = build123.protocol.build_sketch(
-                        idx, tempt_canvas, square_points, False, None
+                        tempt_canvas, Points_list
                     )
 
-                elif chosen_shape == "triangle":
-                    # size: [x_length * 0.33, z_length * 0.33]
-                    tri_w = x_len * 0.33
-                    tri_h = z_len * 0.33
-                    half_tri_w = tri_w / 2
-                    half_tri_h = tri_h / 2
-                    tri_points = [
-                        [x, y - half_tri_h, z],
-                        [x + half_tri_w, y + half_tri_h, z],
-                        [x - half_tri_w, y + half_tri_h, z]
+                elif chosen_shape == "square":
+                    x_size = eval(str(size[0]), {}, context)
+                    z_size = eval(str(size[2]), {}, context)
+
+                    half_x, half_z = x_size / 2, z_size / 2
+
+                    Points_list = [
+                        [center[0] - half_x, center[1], center[2] - half_z],
+                        [center[0] + half_x, center[1], center[2] - half_z],
+                        [center[0] + half_x, center[1], center[2] + half_z],
+                        [center[0] - half_x, center[1], center[2] + half_z]
                     ]
+
                     subtract_sketch = build123.protocol.build_sketch(
-                        idx, tempt_canvas, tri_points, False, None
+                        tempt_canvas, Points_list
                     )
 
                 elif chosen_shape == "cylinder":
-                    # radius: y_length * 0.5
-                    cyl_radius = y_len * 0.5
+                    radius_expr = detail.get("radius", size[0])
+                    if radius_expr == "radius":
+                        radius = eval(str(size[0]), {}, context)
+                    else:
+                        radius = eval(str(radius_expr), {}, context)
+
                     subtract_sketch = build123.protocol.build_circle(
-                        radius=cyl_radius,
-                        center=[x, y, z],
-                        normal=[0, 0, 1]
+                        radius=radius,
+                        center=center,
+                        normal=plane_normal
                     )
 
                 else:
                     raise ValueError(f"Unsupported subtraction shape: {chosen_shape}")
 
                 # Perform subtraction
-                subtract_height = z_len / 2  # configurable if needed
+
                 tempt_canvas = build123.protocol.build_subtract(
                     tempt_canvas, subtract_sketch, subtract_height
                 )
-
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
 

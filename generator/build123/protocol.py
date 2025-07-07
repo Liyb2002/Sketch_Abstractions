@@ -5,7 +5,7 @@ import numpy as np
 from build123d import BuildPart, add
 
 
-def build_sketch(count, canvas, Points_list, output, data_dir, tempt_idx = 0):
+def build_sketch(canvas, Points_list):
 
     # if tempt_idx == 0:
     #     brep_dir = os.path.join(data_dir, "canvas", f"brep_{count}.step")
@@ -14,31 +14,28 @@ def build_sketch(count, canvas, Points_list, output, data_dir, tempt_idx = 0):
     #     brep_dir = os.path.join(data_dir, "canvas", f"tempt_{tempt_idx}.step")
     #     stl_dir = os.path.join(data_dir, "canvas", f"tempt_{tempt_idx}.stl")
 
-    if count == 0:
+    if canvas is None:
         with BuildSketch():
             with BuildLine():
                 lines = []
-                for i in range(0, len(Points_list), 2):
+                for i in range(len(Points_list)):
                     start_point_sublist = Points_list[i]
-                    end_point_sublist = Points_list[i+1]
-                    start_point = (start_point_sublist[0],
-                                start_point_sublist[1], 
-                                start_point_sublist[2])
-                    
-                    
-                    end_point = (end_point_sublist[0],
-                                end_point_sublist[1], 
-                                end_point_sublist[2])
+                    end_point_sublist = Points_list[(i+1) % len(Points_list)]  # wrap around
 
+                    start_point = (
+                        start_point_sublist[0],
+                        start_point_sublist[1],
+                        start_point_sublist[2]
+                    )
+                    end_point = (
+                        end_point_sublist[0],
+                        end_point_sublist[1],
+                        end_point_sublist[2]
+                    )
 
                     line = Line(start_point, end_point)
                     lines.append(line)
-
             perimeter = make_face()
-
-        if output:
-            _ = perimeter.export_stl(stl_dir)
-            _ = perimeter.export_step(brep_dir)
 
         return perimeter
     
@@ -47,28 +44,25 @@ def build_sketch(count, canvas, Points_list, output, data_dir, tempt_idx = 0):
             with BuildSketch():
                 with BuildLine():
                     lines = []
-                    for i in range(0, len(Points_list), 2):
+                    for i in range(len(Points_list)):
                         start_point_sublist = Points_list[i]
-                        end_point_sublist = Points_list[i+1]
-                        start_point = (start_point_sublist[0],
-                                    start_point_sublist[1], 
-                                    start_point_sublist[2])
-                        
-                        
-                        end_point = (end_point_sublist[0],
-                                    end_point_sublist[1], 
-                                    end_point_sublist[2])
+                        end_point_sublist = Points_list[(i+1) % len(Points_list)]  # wrap around
 
+                        start_point = (
+                            start_point_sublist[0],
+                            start_point_sublist[1],
+                            start_point_sublist[2]
+                        )
+                        end_point = (
+                            end_point_sublist[0],
+                            end_point_sublist[1],
+                            end_point_sublist[2]
+                        )
 
                         line = Line(start_point, end_point)
                         lines.append(line)
 
                 perimeter = make_face()
-
-            if output:
-                _ = canvas.part.export_stl(stl_dir)
-                _ = canvas.part.export_step(brep_dir)
-
 
     return perimeter
 
@@ -82,12 +76,12 @@ def build_circle(radius, center, normal):
         Circle(radius = radius)
 
 
-    return perimeter.sketch
+    return perimeter.sketch.face()
 
 
 
 
-def build_extrude(count, canvas, target_face, extrude_amount, output, data_dir):
+def build_extrude(canvas, target_face, extrude_amount):
     # stl_dir = os.path.join(data_dir, "canvas", f"vis_{count}.stl")
     # step_dir = os.path.join(data_dir, "canvas", f"brep_{count}.step")
 
@@ -99,15 +93,17 @@ def build_extrude(count, canvas, target_face, extrude_amount, output, data_dir):
         with BuildPart() as canvas:
             extrude( target_face, amount=extrude_amount)
 
-    if output:
-        _ = canvas.part.export_stl(stl_dir)
-        _ = canvas.part.export_step(step_dir)
-
 
     return canvas
 
 
 def build_subtract(canvas, target_face, extrude_amount):
+    
+    num_lines = 0
+
+    # If target_face exposes edges or boundary loops:
+    if hasattr(target_face, 'edges'):
+        print("target_face.edges",target_face.edges)
 
     with canvas:
         extrude( target_face, amount= extrude_amount, mode=Mode.SUBTRACT)
