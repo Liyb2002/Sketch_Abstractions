@@ -23,18 +23,28 @@ class Component:
 
 
     def param_init(self):
-        # Randomize parameters
-        self.chosen_parameters = {
-            k: random.uniform(v[0], v[1]) for k, v in self.parameters.items()
-        }
+        """
+        Initialize chosen parameters and absolute locations.
+        For numeric ranges, randomize within [min, max].
+        For categorical (like 'normal'), just take the first value.
+        """
+        self.chosen_parameters = {}
+        for k, v in self.parameters.items():
+            if isinstance(v, list) and len(v) == 2 and all(isinstance(n, (int, float)) for n in v):
+                # numeric range
+                self.chosen_parameters[k] = random.uniform(v[0], v[1])
+            else:
+                # categorical or fixed
+                self.chosen_parameters[k] = v[0] if isinstance(v, list) else v
 
         # Compute absolute locations
         if self.quantity > 1 and self.locations:
             self.absolute_locations = [self.compute_absolute_location(loc) for loc in self.locations]
         else:
             self.absolute_locations = [self.compute_absolute_location(self.location)]
+    
 
-   
+
     def compute_absolute_location(self, rel_loc):
         if not rel_loc:
             return {"x": 0, "y": 0, "z": 0}
@@ -89,20 +99,6 @@ class Component:
             child.describe(indent + 1)
 
 
-    def choose_parameters(self, parameters: dict) -> dict:
-        """
-        Randomly choose a value within each parameter's range.
-
-        :param parameters: dict of parameter: [min, max]
-        :return: dict of parameter: chosen_value
-        """
-        chosen = {}
-        for k, v in parameters.items():
-            val = random.uniform(v[0], v[1])
-            chosen[k] = round(val, 4)  # optionally round for readability
-        return chosen
-
-
     def build_one_instance(self, idx, location, tempt_canvas):
         """
         Build one instance of this component at the given location, following cad_operations.
@@ -138,7 +134,14 @@ class Component:
             elif op_name == "sketch_circle":
                 radius = x_len / 2
                 center = [x,y,z]
-                normal = [0, 0, 1]
+
+                normal_axis = self.chosen_parameters.get("normal", ["z"])[0]  # default to z
+                normal_lookup = {
+                    "x": [1, 0, 0],
+                    "y": [0, 1, 0],
+                    "z": [0, 0, 1]
+                }
+                normal = normal_lookup.get(normal_axis, [0, 0, 1])  # fallback to z if unknown
 
 
                 sketch = build123.protocol.build_circle(

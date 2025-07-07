@@ -8,7 +8,8 @@
       "parameters": {
         "x_length": [0.01, 0.05],
         "y_length": [0.01, 0.05],
-        "z_length": [0.3, 0.6]
+        "z_length": [0.3, 0.6],
+        "normal" : ["z"]
       },
       "quantity": 4,
       "locations": [

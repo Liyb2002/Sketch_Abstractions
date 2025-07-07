@@ -101,10 +101,6 @@ def build_subtract(canvas, target_face, extrude_amount):
     
     num_lines = 0
 
-    # If target_face exposes edges or boundary loops:
-    if hasattr(target_face, 'edges'):
-        print("target_face.edges",target_face.edges)
-
     with canvas:
         extrude( target_face, amount= extrude_amount, mode=Mode.SUBTRACT)
 
