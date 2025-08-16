@@ -3,6 +3,82 @@
   "parent": "seat",
   "variants": [
 
+
+     {
+      "name": "rectangle_leg",
+      "parameters": {
+        "x_length": [0.01, 0.05],
+        "y_length": [0.01, 0.05],
+        "z_length": [0.3, 0.6]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x": "-parent x_length / 2 + x_length / 2",
+          "y": "-parent y_length / 2 + y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - x_length / 2",
+          "y": "-parent y_length / 2 + y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "-parent x_length / 2 + x_length / 2",
+          "y": "parent y_length / 2 - y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - x_length / 2",
+          "y": "parent y_length / 2 - y_length / 2",
+          "z": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" }
+      ]
+    },
+
+   {
+      "name": "cylindrical_leg",
+      "parameters": {
+        "x_length": [0.01, 0.05],
+        "y_length": [0.01, 0.05],
+        "z_length": [0.3, 0.6],
+        "normal": ["z"]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x": "-parent x_length / 2 + x_length / 2",
+          "y": "-parent y_length / 2 + y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - x_length / 2",
+          "y": "-parent y_length / 2 + y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "-parent x_length / 2 + x_length / 2",
+          "y": "parent y_length / 2 - y_length / 2",
+          "z": "-z_length"
+        },
+        {
+          "x": "parent x_length / 2 - x_length / 2",
+          "y": "parent y_length / 2 - y_length / 2",
+          "z": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+      ]
+    },
+
+
+
 {
   "name": "single_cylindrical_base",
   "parameters": {

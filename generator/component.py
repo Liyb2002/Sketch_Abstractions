@@ -3,6 +3,7 @@ import random
 import build123.protocol
 import re
 import helper
+from pathlib import Path
 
 class Component:
     def __init__(self, data: dict, parent=None):
@@ -308,6 +309,7 @@ class Component:
         self.param_init()
         tempt_canvas = None
 
+        print("self.absolute_locations", self.absolute_locations)
         for idx, loc in enumerate(self.absolute_locations):
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
 
@@ -315,5 +317,15 @@ class Component:
 
         for child in self.children:
             canvas = child.build(canvas)
+
+
+        # Also save tempt canvas
+        output_dir = Path(__file__).parent / "output" / "seperable"
+        output_dir.mkdir(exist_ok=True)
+        rand = random.randint(100000, 999999)
+        tmp_stl = output_dir / f"{rand}.stl"
+        tmp_step = output_dir / f"{rand}.step"
+        tempt_canvas.part.export_stl(str(tmp_stl))
+        tempt_canvas.part.export_step(str(tmp_step))
 
         return canvas
