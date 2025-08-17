@@ -1,6 +1,7 @@
 {
   "name": "leg",
   "parent": "seat",
+  "children" : [],
   "variants": [
 
 

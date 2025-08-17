@@ -1,6 +1,7 @@
 {
   "name": "backrest",
   "parent": "seat",
+  "children" : ["backrest_hole"],
   "variants": [
     {
       "name": "standard_backrest",
@@ -23,36 +24,6 @@
           "sub_parameters": {
             "radius": "[0.01, 0.02]",
             "edges": [0, 1]
-          }
-        },
-        {
-          "name": "subtract",
-          "probability": 0.8,
-          "sub_parameters": {
-            "shape": ["square", "triangle", "cylinder"],
-            "shape_details": {
-              "square": {
-                "location": { "x": 0, "y": 0, "z": "z_length / 2" },
-                "size": [
-                  "x_length * [0.2, 0.8]",
-                  0,
-                  "z_length * [0.2, 0.8]"
-                ]
-              },
-              "triangle": {
-                "location": { "x": 0, "y": 0, "z": "z_length / 2" },
-                "size": [
-                  "x_length * [0.2, 0.8]",
-                  0,
-                  "z_length * [0.2, 0.8]"
-                ]
-              },
-              "cylinder": {
-                "location": { "x": 0, "y": -0.1, "z": "z_length / 2" },
-                "radius": "y_length * [0.2, 0.45]",
-                "size": ["radius", 0, "radius"]
-              }
-            }
           }
         }
       ]
