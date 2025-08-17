@@ -22,7 +22,6 @@ class Component:
         self.quantity = data.get('quantity', 1)
         self.locations = data.get('locations')
 
-
     def param_init(self):
         """
         Initialize chosen parameters and absolute locations.
@@ -297,35 +296,49 @@ class Component:
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
 
+            self.save_process(tempt_canvas, self.main_canvas)
         return tempt_canvas
 
 
+    def save_process(self, tempt_canvas, full_canvas):
+        to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas)
+        output_dir = Path(__file__).parent / "output" / "history"
+        output_dir.mkdir(exist_ok=True)
+        rand = random.randint(100000, 999999)
 
-    def build(self, canvas=None):
+        tmp_stl = output_dir / f"{self.process_count}_{rand}.stl"
+        tmp_step = output_dir / f"{self.process_count}_{rand}.step"
+        if to_save_canvas is not None and to_save_canvas.part is not None:
+            self.process_count += 1
+            to_save_canvas.part.export_stl(str(tmp_stl))
+            to_save_canvas.part.export_step(str(tmp_step))
+
+    def build(self, canvas=None, process_count = 0):
         """
         Build this component and its children recursively.
         """
 
+        self.process_count = process_count
+        self.main_canvas = canvas
+
         self.param_init()
         tempt_canvas = None
 
-        print("self.absolute_locations", self.absolute_locations)
         for idx, loc in enumerate(self.absolute_locations):
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
 
-        canvas = build123.protocol.merge_canvas(tempt_canvas, canvas)
+        self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas)
 
         for child in self.children:
-            canvas = child.build(canvas)
+            self.main_canvas, self.process_count = child.build(self.main_canvas, self.process_count)
 
 
         # Also save tempt canvas
         output_dir = Path(__file__).parent / "output" / "seperable"
         output_dir.mkdir(exist_ok=True)
-        rand = random.randint(100000, 999999)
-        tmp_stl = output_dir / f"{rand}.stl"
-        tmp_step = output_dir / f"{rand}.step"
+        tmp_stl = output_dir / f"{self.name}.stl"
+        tmp_step = output_dir / f"{self.name}.step"
         tempt_canvas.part.export_stl(str(tmp_stl))
         tempt_canvas.part.export_step(str(tmp_step))
 
-        return canvas
+        return self.main_canvas, self.process_count

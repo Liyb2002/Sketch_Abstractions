@@ -80,7 +80,7 @@ def execute(component_obj):
     output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(exist_ok=True)
 
-    canvas = component_obj.build()  # build full hierarchy
+    canvas, _ = component_obj.build()  # build full hierarchy
 
     stl_path = output_dir / f"{component_obj.name}.stl"
     step_path = output_dir / f"{component_obj.name}.step"
