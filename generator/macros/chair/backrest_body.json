@@ -1,6 +1,6 @@
 {
   "name": "backrest",
-  "parent": "backrest",
+  "children" : [],
   "variants": [
     {
       "name": "standard_backrest",

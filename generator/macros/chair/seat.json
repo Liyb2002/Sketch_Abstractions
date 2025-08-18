@@ -1,5 +1,6 @@
 {
   "name": "root",
+  "children" : [],
   "variants": [
     {
       "name": "standard_seat",
