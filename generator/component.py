@@ -27,14 +27,28 @@ class Component:
         Initialize chosen parameters and absolute locations.
         For numeric ranges, randomize within [min, max].
         For categorical (like 'normal'), just take the first value.
+        For parent references (like 'parent x_length'), inherit from parent.
         """
         self.chosen_parameters = {}
+
         for k, v in self.parameters.items():
+            # Case 1: numeric range [min, max]
             if isinstance(v, list) and len(v) == 2 and all(isinstance(n, (int, float)) for n in v):
-                # numeric range
                 self.chosen_parameters[k] = random.uniform(v[0], v[1])
+
+            # Case 2: parent reference "parent param_name"
+            elif isinstance(v, str) and v.startswith("parent "):
+                if self.parent is None:
+                    raise ValueError(f"Parameter {k} requires a parent, but no parent found.")
+                parent_param = v.split(" ", 1)[1]  # everything after "parent "
+                if parent_param not in self.parent.chosen_parameters:
+                    # Ensure parent params are initialized
+                    self.parent.param_init()
+                
+                self.chosen_parameters[k] = self.parent.chosen_parameters[parent_param]
+
+            # Case 3: categorical or fixed value
             else:
-                # categorical or fixed
                 self.chosen_parameters[k] = v[0] if isinstance(v, list) else v
 
         # Compute absolute locations
@@ -42,7 +56,6 @@ class Component:
             self.absolute_locations = [self.compute_absolute_location(loc) for loc in self.locations]
         else:
             self.absolute_locations = [self.compute_absolute_location(self.location)]
-    
 
 
     def compute_absolute_location(self, rel_loc):
@@ -100,6 +113,9 @@ class Component:
 
 
     def build_one_instance(self, idx, location, tempt_canvas):
+
+        if self.name == "root":
+            return 
         """
         Build one instance of this component at the given location, following cad_operations.
         """
@@ -304,10 +320,9 @@ class Component:
         to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas)
         output_dir = Path(__file__).parent / "output" / "history"
         output_dir.mkdir(exist_ok=True)
-        rand = random.randint(100000, 999999)
 
-        tmp_stl = output_dir / f"{self.process_count}_{rand}.stl"
-        tmp_step = output_dir / f"{self.process_count}_{rand}.step"
+        tmp_stl = output_dir / f"{self.process_count}.stl"
+        tmp_step = output_dir / f"{self.process_count}.step"
         if to_save_canvas is not None and to_save_canvas.part is not None:
             self.process_count += 1
             to_save_canvas.part.export_stl(str(tmp_stl))
@@ -317,7 +332,6 @@ class Component:
         """
         Build this component and its children recursively.
         """
-
         self.process_count = process_count
         self.main_canvas = canvas
 
@@ -334,11 +348,12 @@ class Component:
 
 
         # Also save tempt canvas
-        output_dir = Path(__file__).parent / "output" / "seperable"
-        output_dir.mkdir(exist_ok=True)
-        tmp_stl = output_dir / f"{self.name}.stl"
-        tmp_step = output_dir / f"{self.name}.step"
-        tempt_canvas.part.export_stl(str(tmp_stl))
-        tempt_canvas.part.export_step(str(tmp_step))
+        if tempt_canvas is not None:
+            output_dir = Path(__file__).parent / "output" / "seperable"
+            output_dir.mkdir(exist_ok=True)
+            tmp_stl = output_dir / f"{self.name}.stl"
+            tmp_step = output_dir / f"{self.name}.step"
+            tempt_canvas.part.export_stl(str(tmp_stl))
+            tempt_canvas.part.export_step(str(tmp_step))
 
         return self.main_canvas, self.process_count

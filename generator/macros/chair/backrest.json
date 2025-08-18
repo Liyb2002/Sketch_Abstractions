@@ -1,6 +1,6 @@
 {
   "name": "backrest",
-  "parent": "seat",
+  "parent": "root",
   "variants": [
     {
       "name": "standard_backrest",

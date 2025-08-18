@@ -1,12 +1,12 @@
 {
-  "name": "seat",
+  "name": "root",
   "variants": [
     {
       "name": "standard_seat",
       "parameters": {
-        "x_length": [0.3, 0.5],
-        "y_length": [0.3, 0.5],
-        "z_length": [0.015, 0.1]
+        "x_length": "parent x_length",
+        "y_length": "parent y_length",
+        "z_length": "parent z_length"
       },
       "location": { "x": 0, "y": 0, "z": 0 },
       "cad_operations": [

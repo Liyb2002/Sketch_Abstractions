@@ -1,6 +1,6 @@
 {
   "name": "leg",
-  "parent": "seat",
+  "parent": "root",
   "variants": [
 
 {

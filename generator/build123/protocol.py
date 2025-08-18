@@ -148,6 +148,9 @@ def merge_canvas(canvas1, canvas2):
     if canvas2 is not None:
         parts.append(get_part(canvas2))
 
+    if len(parts) == 0 or parts[0] == None:
+        return None
+    
     with BuildPart() as merged:
         for part in parts:
             add(part)

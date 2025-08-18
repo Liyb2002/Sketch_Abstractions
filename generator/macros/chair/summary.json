@@ -4,5 +4,18 @@
     "seat",
     "backrest",
     "leg"
+  ],
+  "variants": [
+    {
+      "name": "root",
+      "location": { "x": 0, "y": 0, "z": 0 },
+      "cad_operations": [],
+      "parameters": {
+        "x_length": [0.3, 0.5],
+        "y_length": [0.3, 0.5],
+        "z_length": [0.015, 0.1]
+      }
+
+    }
   ]
 }

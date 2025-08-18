@@ -39,37 +39,26 @@ def load_component(json_path, parent=None):
 def read_macro(folder_path):
     folder_path = Path(folder_path)
 
-    # read summary.json
+    # Load the root component (summary.json)
+    root_component = load_component(folder_path / "summary.json")
+
+    # Read summary.json again to get list of child names
     with open(folder_path / "summary.json", 'r') as f:
         summary = json.load(f)
 
     macro_name = summary['name']
     component_names = summary['components']
 
-    name_to_component = {}
+    name_to_component = {macro_name: root_component}
 
-    # load all components
+    # Load each child and attach to root
     for name in component_names:
         json_file = folder_path / f"{name}.json"
-        c = load_component(json_file)
+        c = load_component(json_file, parent=root_component)
+        root_component.children.append(c)
         name_to_component[name] = c
 
-    # set parents and children
-    for name in component_names:
-        json_file = folder_path / f"{name}.json"
-        with open(json_file, 'r') as f:
-            comp_dict = json.load(f)
-
-        parent_name = comp_dict.get('parent')
-        if parent_name:
-            parent = name_to_component[parent_name]
-            child = name_to_component[name]
-            child.parent = parent
-            parent.children.append(child)
-
-    root_components = [c for c in name_to_component.values() if c.parent is None]
-
-    return macro_name, root_components
+    return macro_name, root_component
 
 
 def execute(component_obj):
@@ -94,7 +83,7 @@ def execute(component_obj):
 
 if __name__ == "__main__":
     macro_folder = Path(__file__).parent / "macros" / "chair"
-    macro_name, components = read_macro(macro_folder)
+    macro_name, root_component = read_macro(macro_folder)
 
     # print(f"Macro: {macro_name}")
     # print("Components:")
@@ -102,5 +91,4 @@ if __name__ == "__main__":
     #     comp.describe()
 
     # Execute the first root component
-    root = components[0]
-    execute(root)
+    execute(root_component)
