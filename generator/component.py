@@ -4,6 +4,7 @@ import build123.protocol
 import re
 import helper
 from pathlib import Path
+import ast
 
 class Component:
     def __init__(self, data: dict, parent=None):
@@ -25,10 +26,24 @@ class Component:
     def param_init(self):
         """
         Initialize chosen parameters and absolute locations.
-        For numeric ranges, randomize within [min, max].
-        For categorical (like 'normal'), just take the first value.
-        For parent references (like 'parent x_length'), inherit from parent.
+        - Numeric ranges [min, max] → random uniform value
+        - Parent references (e.g., 'parent x_length') → inherit from parent
+        - Parent refs with multiplier (e.g., 'parent x_length * [0.2, 0.8]')
+        → inherit from parent, multiply by random in range
+        - Categorical (list of strings) → first element
+        - Fixed values → used directly
         """
+        def parse_range(s: str):
+            """Safely parse a '[min, max]' string into a Python list of floats."""
+            try:
+                val = ast.literal_eval(s)
+                if (isinstance(val, list) and len(val) == 2 
+                        and all(isinstance(n, (int, float)) for n in val)):
+                    return val
+            except Exception:
+                pass
+            return None
+
         self.chosen_parameters = {}
 
         for k, v in self.parameters.items():
@@ -36,16 +51,33 @@ class Component:
             if isinstance(v, list) and len(v) == 2 and all(isinstance(n, (int, float)) for n in v):
                 self.chosen_parameters[k] = random.uniform(v[0], v[1])
 
-            # Case 2: parent reference "parent param_name"
+            # Case 2: parent reference (with optional multiplier)
             elif isinstance(v, str) and v.startswith("parent "):
                 if self.parent is None:
                     raise ValueError(f"Parameter {k} requires a parent, but no parent found.")
-                parent_param = v.split(" ", 1)[1]  # everything after "parent "
+
+                # Split at '*' if multiplier exists
+                if "*" in v:
+                    parent_part, multiplier_part = v.split("*", 1)
+                    parent_param = parent_part.replace("parent", "").strip()
+                    multiplier_range = parse_range(multiplier_part.strip())
+                    if multiplier_range is None:
+                        raise ValueError(f"Invalid multiplier format for {k}: {multiplier_part}")
+                else:
+                    parent_param = v.replace("parent", "").strip()
+                    multiplier_range = None
+
+                # Ensure parent params are initialized
                 if parent_param not in self.parent.chosen_parameters:
-                    # Ensure parent params are initialized
                     self.parent.param_init()
-                
-                self.chosen_parameters[k] = self.parent.chosen_parameters[parent_param]
+
+                base_value = self.parent.chosen_parameters[parent_param]
+
+                if multiplier_range:
+                    factor = random.uniform(multiplier_range[0], multiplier_range[1])
+                    self.chosen_parameters[k] = base_value * factor
+                else:
+                    self.chosen_parameters[k] = base_value
 
             # Case 3: categorical or fixed value
             else:

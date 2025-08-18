@@ -1,6 +1,6 @@
 {
   "name": "backrest",
-  "children" : ["backrest_body"],
+  "children" : ["backrest_body", "backrest_hole"],
   "parent": "root",
   "variants": [
     {
