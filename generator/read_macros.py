@@ -39,15 +39,15 @@ def load_component(json_path, parent=None):
 def read_macro(folder_path):
     folder_path = Path(folder_path)
 
-    # Load the root component (summary.json)
-    root_component = load_component(folder_path / "summary.json")
+    # Load the root component (root.json)
+    root_component = load_component(folder_path / "root.json")
 
     # Read summary.json again to get list of child names
-    with open(folder_path / "summary.json", 'r') as f:
-        summary = json.load(f)
+    with open(folder_path / "root.json", 'r') as f:
+       root_summary = json.load(f)
 
-    macro_name = summary['name']
-    component_names = summary['components']
+    macro_name = root_summary['name']
+    component_names = root_summary['components']
 
     name_to_component = {macro_name: root_component}
 
