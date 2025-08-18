@@ -70,35 +70,44 @@ class Component:
             if isinstance(val, str):
                 expr = val.strip()
 
-                # Replace all 'parent param' with parent's parameter value
                 if self.parent:
-                    def replace_parent(match):
-                        param = match.group(1)
-                        if param not in self.parent.chosen_parameters:
-                            raise ValueError(f"Parent parameter '{param}' not found for {self.name}")
-                        return str(self.parent.chosen_parameters[param])
+                    # Handle explicit parent location reference
+                    if expr.startswith("parent ") and expr.endswith("_location"):
+                        loc_key = expr.split()[1].replace("_location", "")
+                        if loc_key not in ["x", "y", "z"]:
+                            raise ValueError(f"Invalid parent location key: {loc_key}")
+                        val = self.parent.absolute_locations[0][loc_key]
+                    else:
+                        # Generic parent param reference (e.g. "parent x_length")
+                        def replace_parent(match):
+                            param = match.group(1)
+                            if param not in self.parent.chosen_parameters:
+                                raise ValueError(f"Parent parameter '{param}' not found for {self.name}")
+                            return str(self.parent.chosen_parameters[param])
 
-                    expr = re.sub(r'parent\s+([a-zA-Z_]\w*)', replace_parent, expr)
+                        expr = re.sub(r'parent\s+([a-zA-Z_]\w*)', replace_parent, expr)
 
-                # Replace own parameters
-                for param_name, param_value in self.chosen_parameters.items():
-                    expr = expr.replace(param_name, str(param_value))
+                        # Replace own parameters
+                        for param_name, param_value in self.chosen_parameters.items():
+                            expr = expr.replace(param_name, str(param_value))
 
-                try:
-                    val = eval(expr)
-                except Exception as e:
-                    raise ValueError(
-                        f"Failed to evaluate location expression '{rel_loc[axis]}' for {self.name}: {e}"
-                    )
+                        try:
+                            val = eval(expr)
+                        except Exception as e:
+                            raise ValueError(
+                                f"Failed to evaluate location expression '{rel_loc[axis]}' for {self.name}: {e}"
+                            )
 
             abs_loc[axis] = val
 
+        # Add parent's absolute position (relative → absolute)
         if self.parent:
             parent_loc = self.parent.absolute_locations[0]
             abs_loc["x"] += parent_loc["x"]
             abs_loc["y"] += parent_loc["y"]
             abs_loc["z"] += parent_loc["z"]
 
+        self.abs_loc = abs_loc
         return abs_loc
 
 

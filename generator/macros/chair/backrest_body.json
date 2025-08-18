@@ -1,0 +1,31 @@
+{
+  "name": "backrest",
+  "parent": "backrest",
+  "variants": [
+    {
+      "name": "standard_backrest",
+      "parameters": {
+        "x_length": "parent x_length",
+        "y_length": "parent y_length",
+        "z_length": "parent z_length"
+      },
+      "location": {
+        "x": "parent x_location",
+        "y": "parent y_location",
+        "z": "parent z_location"
+      },
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 0.8,
+          "sub_parameters": {
+            "radius": "[0.01, 0.02]",
+            "edges": [0, 1]
+          }
+        }
+      ]
+    }
+  ]
+}

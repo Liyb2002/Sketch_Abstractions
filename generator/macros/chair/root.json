@@ -1,6 +1,6 @@
 {
   "name": "simple_chair",
-  "children": [
+  "components": [
     "seat",
     "backrest",
     "leg"
