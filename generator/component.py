@@ -60,54 +60,54 @@ class Component:
 
     def compute_absolute_location(self, rel_loc):
         if not rel_loc:
-            return {"x": 0, "y": 0, "z": 0}
+            return {"x_location": 0, "y_location": 0, "z_location": 0}
 
         abs_loc = {}
 
-        for axis in ["x", "y", "z"]:
+        for axis in ["x_location", "y_location", "z_location"]:
             val = rel_loc.get(axis, 0)
 
             if isinstance(val, str):
                 expr = val.strip()
 
+                # Replace all 'parent param' with parent's parameter value
                 if self.parent:
-                    # Handle explicit parent location reference
-                    if expr.startswith("parent ") and expr.endswith("_location"):
-                        loc_key = expr.split()[1].replace("_location", "")
-                        if loc_key not in ["x", "y", "z"]:
-                            raise ValueError(f"Invalid parent location key: {loc_key}")
-                        val = self.parent.absolute_locations[0][loc_key]
-                    else:
-                        # Generic parent param reference (e.g. "parent x_length")
-                        def replace_parent(match):
-                            param = match.group(1)
-                            if param not in self.parent.chosen_parameters:
-                                raise ValueError(f"Parent parameter '{param}' not found for {self.name}")
+                    def replace_parent(match):
+                        param = match.group(1)
+                        print("param", param)
+                        print("self.parent.absolute_locations", self.parent.absolute_locations)
+
+                        if param not in self.parent.chosen_parameters and not param.endswith("_location"):
+                            raise ValueError(f"Parent parameter '{param}' not found for {self.name}")
+
+                        if param.endswith("_length"):
+                            return str(self.parent.chosen_parameters[param])
+                        elif param.endswith("_location"):
+                            return str(self.parent.absolute_locations[0][param])
+                        else:
                             return str(self.parent.chosen_parameters[param])
 
-                        expr = re.sub(r'parent\s+([a-zA-Z_]\w*)', replace_parent, expr)
+                    expr = re.sub(r'parent\s+([a-zA-Z_]\w*)', replace_parent, expr)
 
-                        # Replace own parameters
-                        for param_name, param_value in self.chosen_parameters.items():
-                            expr = expr.replace(param_name, str(param_value))
+                # Replace own parameters
+                for param_name, param_value in self.chosen_parameters.items():
+                    expr = expr.replace(param_name, str(param_value))
 
-                        try:
-                            val = eval(expr)
-                        except Exception as e:
-                            raise ValueError(
-                                f"Failed to evaluate location expression '{rel_loc[axis]}' for {self.name}: {e}"
-                            )
+                try:
+                    val = eval(expr)
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to evaluate location expression '{rel_loc[axis]}' for {self.name}: {e}"
+                    )
 
             abs_loc[axis] = val
 
-        # Add parent's absolute position (relative → absolute)
         if self.parent:
             parent_loc = self.parent.absolute_locations[0]
-            abs_loc["x"] += parent_loc["x"]
-            abs_loc["y"] += parent_loc["y"]
-            abs_loc["z"] += parent_loc["z"]
+            abs_loc["x_location"] += parent_loc["x_location"]
+            abs_loc["y_location"] += parent_loc["y_location"]
+            abs_loc["z_location"] += parent_loc["z_location"]
 
-        self.abs_loc = abs_loc
         return abs_loc
 
 
@@ -132,7 +132,7 @@ class Component:
         y_len = self.chosen_parameters.get("y_length")
         z_len = self.chosen_parameters.get("z_length")
 
-        x, y, z = location["x"], location["y"], location["z"]
+        x, y, z = location["x_location"], location["y_location"], location["z_location"]
 
         # context for eval()
         context = {
@@ -239,10 +239,10 @@ class Component:
                 }
 
                 # Adjust center based on shape-specific location
-                location = detail.get("location", {"x": 0, "y": 0, "z": 0})
-                offset_x = eval(str(location.get("x", 0)), {}, context)
-                offset_y = eval(str(location.get("y", 0)), {}, context)
-                offset_z = eval(str(location.get("z", 0)), {}, context)
+                location = detail.get("location", {"x_location": 0, "y_location": 0, "z_location": 0})
+                offset_x = eval(str(location.get("x_location", 0)), {}, context)
+                offset_y = eval(str(location.get("y_location", 0)), {}, context)
+                offset_z = eval(str(location.get("z_location", 0)), {}, context)
 
                 adjusted_center = [
                     center[0] + offset_x,

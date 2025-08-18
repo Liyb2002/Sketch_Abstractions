@@ -12,9 +12,9 @@
       },
       "cad_operations": [],
       "location": {
-        "x": 0,
-        "y": "parent y_length / 2",
-        "z": 0
+        "x_location": 0,
+        "y_location": "parent y_length",
+        "z_location": 0
       }
     }
   ]

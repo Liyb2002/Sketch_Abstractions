@@ -15,9 +15,9 @@
   "quantity": 1,
   "locations": [
     {
-      "x": 0,
-      "y": 0,
-      "z": "z_length"
+      "x_location": 0,
+      "y_location": 0,
+      "z_location": "z_length"
     }
   ],
   "cad_operations": [
