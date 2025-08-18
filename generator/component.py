@@ -22,6 +22,7 @@ class Component:
         self.cad_operations = data['cad_operations']
         self.quantity = data.get('quantity', 1)
         self.locations = data.get('locations')
+        self.boolean = data.get('boolean')
 
     def param_init(self):
         """
@@ -358,7 +359,7 @@ class Component:
 
 
     def save_process(self, tempt_canvas, full_canvas):
-        to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas)
+        to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas, self.boolean)
         output_dir = Path(__file__).parent / "output" / "history"
         output_dir.mkdir(exist_ok=True)
 
@@ -368,6 +369,7 @@ class Component:
             self.process_count += 1
             to_save_canvas.part.export_stl(str(tmp_stl))
             to_save_canvas.part.export_step(str(tmp_step))
+
 
     def build(self, canvas=None, process_count = 0):
         """
@@ -382,7 +384,7 @@ class Component:
         for idx, loc in enumerate(self.absolute_locations):
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
 
-        self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas)
+        self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas, self.boolean)
 
         for child in self.children:
             self.main_canvas, self.process_count = child.build(self.main_canvas, self.process_count)

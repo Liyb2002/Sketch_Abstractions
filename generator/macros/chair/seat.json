@@ -1,9 +1,11 @@
 {
   "name": "root",
+  "boolean" : "addition",
   "children" : [],
   "variants": [
     {
       "name": "standard_seat",
+      "boolean" : "addition",
       "parameters": {
         "x_length": "parent x_length",
         "y_length": "parent y_length",

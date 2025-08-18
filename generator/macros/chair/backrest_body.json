@@ -4,6 +4,7 @@
   "variants": [
     {
       "name": "backrest_body",
+      "boolean" : "addition",
       "parameters": {
         "x_length": "parent x_length",
         "y_length": "parent y_length",

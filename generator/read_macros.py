@@ -16,6 +16,7 @@ def load_component(json_path, parent=None):
         variant = random.choice(comp_dict['variants'])
         data = {
             'name': variant.get('name', comp_dict['name']),
+            'boolean' : variant['boolean'],
             'parameters': variant['parameters'],
             'location': variant.get('location'),
             'cad_operations': variant['cad_operations'],
@@ -25,6 +26,7 @@ def load_component(json_path, parent=None):
     else:
         data = {
             'name': comp_dict['name'],
+            'boolean' : variant['boolean'],
             'parameters': comp_dict['parameters'],
             'location': comp_dict.get('location'),
             'cad_operations': comp_dict['cad_operations'],

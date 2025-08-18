@@ -4,6 +4,7 @@
   "variants": [
     {
       "name": "backrest_hole_square",
+      "boolean" : "subtraction",
       "parameters": {
         "x_length": "parent x_length  * [0.2, 0.8]",
         "y_length": "parent y_length * [1.2,1.8]" ,

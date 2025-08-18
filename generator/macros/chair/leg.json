@@ -6,6 +6,7 @@
 
 {
   "name": "single_cylindrical_base",
+    "boolean" : "addition",
   "parameters": {
     "x_length": [0.1, 0.2],
     "y_length": [0.1, 0.2],

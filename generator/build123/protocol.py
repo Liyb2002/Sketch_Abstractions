@@ -141,17 +141,26 @@ def get_part(obj):
     else:
         return obj
 
-def merge_canvas(canvas1, canvas2):
-    parts = []
-    if canvas1 is not None:
-        parts.append(get_part(canvas1))
-    if canvas2 is not None:
-        parts.append(get_part(canvas2))
+def merge_canvas(canvas1, canvas2, boolean):
+    add_parts = []
+    subtract_parts = []
 
-    if len(parts) == 0 or parts[0] == None:
+    if canvas1 is not None:
+        if boolean == "subtraction":
+            subtract_parts.append(get_part(canvas1))
+        else:
+            add_parts.append(get_part(canvas1))
+    if canvas2 is not None:
+        add_parts.append(get_part(canvas2))
+
+    if len(add_parts) == 0 or add_parts[0] == None:
         return None
     
     with BuildPart() as merged:
-        for part in parts:
+        for part in add_parts:
             add(part)
+        
+        for part in subtract_parts:
+            add(part, mode=Mode.SUBTRACT)  
+
     return merged
