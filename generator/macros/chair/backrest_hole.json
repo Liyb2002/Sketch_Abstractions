@@ -2,7 +2,7 @@
   "name": "backrest_hole",
   "children" : [],
   "variants": [
-    {
+  {
       "name": "backrest_hole_square",
       "boolean" : "subtraction",
       "parameters": {
@@ -44,7 +44,7 @@
       "name": "backrest_hole_circle",
       "boolean" : "subtraction",
       "parameters": {
-        "x_length": "parent x_length  * [0.2, 0.8]",
+        "x_length": "parent y_length  * [1.2, 1.5]",
         "y_length": "parent y_length * [1.01, 1.02] " ,
         "z_length": "parent z_length  * [0.2, 0.8]"
       },

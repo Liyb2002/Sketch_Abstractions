@@ -190,7 +190,6 @@ class Component:
                 )
 
             elif op_name == "sketch_circle":
-                print("Hi?")
                 radius = x_len / 2
                 center = [x,y,z]
 
