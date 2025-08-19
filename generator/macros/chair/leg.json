@@ -27,37 +27,8 @@
     },
     {
       "name": "extrude"
-    },
-    {
-      "name": "add",
-      "probability": 0.8,
-      "sub_parameters": {
-        "shape": ["square", "triangle", "cylinder"],
-        "shape_details": {
-          "square": {
-            "location": { "x": 0, "y": 0, "z": "-z_length" },
-            "size": [
-              "x_length * [1.2, 1.8]",
-              0,
-              "z_length * [0.1, 0.3]"
-            ]
-          },
-          "triangle": {
-            "location": { "x": 0, "y": 0, "z": "-z_length" },
-            "size": [
-              "x_length * [1.2, 1.8]",
-              0,
-              "z_length * [0.1, 0.3]"
-            ]
-          },
-          "cylinder": {
-            "location": { "x": 0, "y": -0.1, "z": "-z_length * 1.2" },
-            "radius": "y_length * [0.7, 1.2]",
-            "size": ["radius", "radius", 0]
-          }
-        }
-      }
     }
+   
   ]
 }
 

@@ -188,8 +188,9 @@ class Component:
                 sketch = build123.protocol.build_sketch(
                     tempt_canvas, new_point_list
                 )
-            
+
             elif op_name == "sketch_circle":
+                print("Hi?")
                 radius = x_len / 2
                 center = [x,y,z]
 
@@ -215,6 +216,21 @@ class Component:
                 sketch = build123.protocol.build_circle(
                     radius, center, normal
                 )
+
+            elif op_name == "sketch_triangle":
+                # Isosceles triangle centered at (x, y).
+                # Base length = x_len, height = y_len.
+                half_x, half_y = x_len / 2, y_len / 2
+                new_point_list = [
+                    [x - half_x, y - half_y, z],  # left base
+                    [x + half_x, y - half_y, z],  # right base
+                    [x,          y + half_y, z],  # apex
+                ]
+                sketch = build123.protocol.build_sketch(
+                    tempt_canvas, new_point_list
+                )
+
+
 
             elif op_name == "extrude":
                 if sketch is None:
