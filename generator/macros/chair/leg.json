@@ -8,9 +8,9 @@
   "name": "single_cylindrical_base",
   "boolean" : "addition",
   "parameters": {
-    "x_length": [0.1, 0.2],
-    "y_length": [0.1, 0.2],
-    "z_length": [0.3, 0.6],
+    "x_length": "parent x_length",
+    "y_length": "parent y_length",
+    "z_length": "parent z_length",
     "normal": ["-z"]
   },
   "quantity": 1,
@@ -18,7 +18,7 @@
     {
       "x_location": 0,
       "y_location": 0,
-      "z_location": "z_length"
+      "z_location": 0
     }
   ],
   "cad_operations": [   

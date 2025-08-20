@@ -107,8 +107,6 @@ class Component:
                 if self.parent:
                     def replace_parent(match):
                         param = match.group(1)
-                        print("param", param)
-                        print("self.parent.absolute_locations", self.parent.absolute_locations)
 
                         if param not in self.parent.chosen_parameters and not param.endswith("_location"):
                             raise ValueError(f"Parent parameter '{param}' not found for {self.name}")
@@ -397,6 +395,7 @@ class Component:
         tempt_canvas = None
 
         for idx, loc in enumerate(self.absolute_locations):
+            print("loc")
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
 
         self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas, self.boolean)
