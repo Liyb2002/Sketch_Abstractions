@@ -17,13 +17,11 @@
     "normal": ["-z"]
   },
   "quantity": 1,
-  "locations": [
-    {
-      "x_location": 0,
-      "y_location": 0,
-      "z_location": 0
-    }
-  ],
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "- parent z_length"
+        },
   "cad_operations": [
         { "name": "sketch_circle" },
         { "name": "extrude" }
