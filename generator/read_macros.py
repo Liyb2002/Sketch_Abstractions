@@ -3,7 +3,7 @@ from pathlib import Path
 import component
 import random
 
-def load_component(json_path, parent=None):
+def load_component(json_path, parent=None, labels = [0]):
     """
     Reads JSON file, picks a variant if any, and returns a Component instance.
     """
@@ -35,7 +35,7 @@ def load_component(json_path, parent=None):
             'locations': comp_dict.get("locations")
         }
 
-    c = component.Component(data, parent=parent)
+    c = component.Component(data, parent=parent, labels = labels)
     return c
 
 
@@ -43,16 +43,18 @@ def read_macro(folder_path):
     folder_path = Path(folder_path)
 
     # Recursive loader for children
-    def load_with_children(name, parent=None):
+    def load_with_children(name, parent=None, labels = [0]):
         json_file = folder_path / f"{name}.json"
-        comp = load_component(json_file, parent=parent)
+        comp = load_component(json_file, parent=parent, labels= labels)
 
         with open(json_file, 'r') as f:
             comp_dict = json.load(f)
 
         child_names = comp_dict.get("children", [])
-        for child_name in child_names:
-            child_comp = load_with_children(child_name, parent=comp)
+        for idx, child_name in enumerate(child_names):
+            new_labels = labels.copy()  
+            new_labels.append(idx)
+            child_comp = load_with_children(child_name, parent=comp, labels=new_labels)
             comp.children.append(child_comp)
 
         return comp

@@ -7,7 +7,7 @@ from pathlib import Path
 import ast
 
 class Component:
-    def __init__(self, data: dict, parent=None):
+    def __init__(self, data: dict, parent=None, labels = [0]):
         """
         Initializes the component from its chosen variant dict.
         :param data: dict of chosen variant
@@ -24,6 +24,8 @@ class Component:
         self.locations = data.get('locations')
         self.boolean = data.get('boolean')
         self.condition = data.get('condition')
+
+        self.labels = labels
 
     def param_init(self):
         """
@@ -410,11 +412,17 @@ class Component:
 
         # Also save tempt canvas
         if tempt_canvas is not None:
+
+            file_name = "-".join(str(n) for n in self.labels)
+
             output_dir = Path(__file__).parent / "output" / "seperable"
-            output_dir.mkdir(exist_ok=True)
-            tmp_stl = output_dir / f"{self.name}.stl"
-            tmp_step = output_dir / f"{self.name}.step"
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            tmp_stl = output_dir / f"{file_name}.stl"
+            tmp_step = output_dir / f"{file_name}.step"
+
             tempt_canvas.part.export_stl(str(tmp_stl))
             tempt_canvas.part.export_step(str(tmp_step))
+
 
         return self.main_canvas, self.process_count
