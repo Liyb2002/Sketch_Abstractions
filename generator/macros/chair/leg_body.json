@@ -6,8 +6,30 @@
 
 
 
+    {
+  "name": "single_cylindrical_leg",
+  "boolean" : "addition",
+  "parameters": {
+    "x_length": "parent x_length",
+    "y_length": "parent y_length",
+    "z_length": "parent z_length",
+    "normal": ["-z"]
+  },
+  "quantity": 1,
+  "locations": [
+    {
+      "x_location": 0,
+      "y_location": 0,
+      "z_location": 0
+    }
+  ],
+  "cad_operations": [   
+  ]
+},
+
+
    {
-      "name": "cylindrical_leg",
+      "name": "four_cylindrical_leg",
         "boolean" : "addition",
       "parameters": {
         "x_length": [0.01, 0.05],

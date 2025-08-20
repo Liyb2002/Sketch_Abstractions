@@ -395,7 +395,6 @@ class Component:
         tempt_canvas = None
 
         for idx, loc in enumerate(self.absolute_locations):
-            print("loc")
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
 
         self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas, self.boolean)
