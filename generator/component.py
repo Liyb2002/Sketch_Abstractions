@@ -393,7 +393,7 @@ class Component:
         """
 
         if self.parent and self.condition !="None" and self.condition != self.parent.name:
-            return canvas, process_count
+            return canvas, process_count, None
 
         self.process_count = process_count
         self.main_canvas = canvas
@@ -407,11 +407,11 @@ class Component:
         self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas, self.boolean)
 
         for child in self.children:
-            self.main_canvas, self.process_count = child.build(self.main_canvas, self.process_count)
-
+            self.main_canvas, self.process_count, child_tempt_canvas = child.build(self.main_canvas, self.process_count)
+            tempt_canvas = build123.protocol.merge_canvas(child_tempt_canvas, tempt_canvas, child.boolean)
 
         # Also save tempt canvas
-        if tempt_canvas is not None:
+        if tempt_canvas is not None and len(self.labels) != 1:
 
             file_name = "-".join(str(n) for n in self.labels)
 
@@ -425,4 +425,4 @@ class Component:
             tempt_canvas.part.export_step(str(tmp_step))
 
 
-        return self.main_canvas, self.process_count
+        return self.main_canvas, self.process_count, tempt_canvas
