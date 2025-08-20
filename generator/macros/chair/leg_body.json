@@ -1,6 +1,6 @@
 {
   "name": "leg_body",
-  "children" : ["single_cylindrical_leg_body"],
+  "children" : ["single_cylindrical_leg_body", "single_cylindrical_leg_base"],
   "parent": "leg",
   "variants": [
 
@@ -12,7 +12,7 @@
   "parameters": {
     "x_length": "parent x_length",
     "y_length": "parent y_length",
-    "z_length": "parent z_length",
+    "z_length": [0.3, 0.6],
     "normal": ["-z"]
   },
   "quantity": 1,
