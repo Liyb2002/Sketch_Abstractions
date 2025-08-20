@@ -5,10 +5,10 @@
   "variants": [
 
 
-    
+
     
 {
-  "name": "single_cylindrical_base",
+  "name": "leg_node",
   "boolean" : "addition",
   "parameters": {
     "x_length": "parent x_length",
