@@ -1,0 +1,39 @@
+{
+  "name": "leg_body",
+  "children" : [],
+  "parent": "leg",
+  "variants": [
+
+{
+  "name": "single_cylindrical_base",
+    "boolean" : "addition",
+  "parameters": {
+    "x_length": "parent x_length",
+    "y_length": "parent y_length",
+    "z_length": "parent z_length",
+    "normal": ["-z"]
+  },
+  "quantity": 1,
+  "locations": [
+    {
+      "x_location": 0,
+      "y_location": 0,
+      "z_location": "z_length"
+    }
+  ],
+  "cad_operations": [
+    {
+      "name": "sketch_circle"
+    },
+    {
+      "name": "extrude"
+    }
+   
+  ]
+}
+
+
+
+
+  ]
+}

@@ -1,12 +1,12 @@
 {
   "name": "leg",
-  "children" : [],
+  "children" : ["leg_body"],
   "parent": "root",
   "variants": [
 
 {
   "name": "single_cylindrical_base",
-    "boolean" : "addition",
+  "boolean" : "addition",
   "parameters": {
     "x_length": [0.1, 0.2],
     "y_length": [0.1, 0.2],
@@ -21,14 +21,7 @@
       "z_location": "z_length"
     }
   ],
-  "cad_operations": [
-    {
-      "name": "sketch_circle"
-    },
-    {
-      "name": "extrude"
-    }
-   
+  "cad_operations": [   
   ]
 }
 
