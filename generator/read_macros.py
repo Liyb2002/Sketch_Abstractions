@@ -21,7 +21,8 @@ def load_component(json_path, parent=None):
             'location': variant.get('location'),
             'cad_operations': variant['cad_operations'],
             'quantity': variant.get("quantity", 1),
-            'locations': variant.get("locations")
+            'locations': variant.get("locations"),
+            'condition': variant.get('condition', 'None')
         }
     else:
         data = {

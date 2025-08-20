@@ -23,6 +23,7 @@ class Component:
         self.quantity = data.get('quantity', 1)
         self.locations = data.get('locations')
         self.boolean = data.get('boolean')
+        self.condition = data.get('condition')
 
     def param_init(self):
         """
@@ -388,6 +389,10 @@ class Component:
         """
         Build this component and its children recursively.
         """
+
+        if self.parent and self.condition !="None" and self.condition != self.parent.name:
+            return canvas, process_count
+
         self.process_count = process_count
         self.main_canvas = canvas
 

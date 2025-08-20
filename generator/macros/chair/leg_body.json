@@ -1,6 +1,6 @@
 {
   "name": "leg_body",
-  "children" : [],
+  "children" : ["single_cylindrical_leg_body"],
   "parent": "leg",
   "variants": [
 
