@@ -122,6 +122,38 @@ def build_chamfer(canvas, target_edge, radius):
     return canvas
 
 
+def build_sweep(canvas, target_face, control_points, *, is_frenet=True, mode=Mode.ADD):
+    """
+    Build a sweep from `target_face` along a spline through `control_points`.
+    - If `canvas` is None, returns a new BuildPart containing ONLY the sweep.
+    - Otherwise, booleans the sweep into `canvas.part` using `mode`.
+    """
+    # 1) Build the sweep as a standalone solid
+    pts = [Vector(*p) for p in control_points]
+    with BuildPart() as tmp:
+        with BuildLine() as path_ln:
+            Spline(pts)
+        path_wire = path_ln.wire()
+        section = target_face.face() if isinstance(target_face, Sketch) else target_face
+        sweep(sections=section, path=path_wire, is_frenet=is_frenet, mode=Mode.ADD)
+    swept_solid = tmp.part  # solid built in temp context
+
+    # If no canvas provided, return the sweep as the "canvas"
+    if canvas is None:
+        return tmp  # contains .part == swept_solid
+
+    # 2) Boolean it onto the existing canvas.part
+    if mode == Mode.ADD:
+        canvas.part = canvas.part + swept_solid
+    elif mode == Mode.SUBTRACT:
+        canvas.part = canvas.part - swept_solid
+    elif mode == Mode.INTERSECT:
+        canvas.part = canvas.part & swept_solid
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+
+    return canvas
+
 
 def simulate_extrude(sketch, amount):
     with BuildPart() as temp:

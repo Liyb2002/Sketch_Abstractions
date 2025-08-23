@@ -24,6 +24,7 @@ class Component:
         self.locations = data.get('locations')
         self.boolean = data.get('boolean')
         self.condition = data.get('condition')
+        self.path = data.get('path')
 
         self.labels = labels
 
@@ -230,8 +231,6 @@ class Component:
                     tempt_canvas, new_point_list
                 )
 
-
-
             elif op_name == "extrude":
                 if sketch is None:
                     raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
@@ -268,6 +267,17 @@ class Component:
                         tempt_canvas = build123.protocol.build_chamfer(
                             tempt_canvas, target_edge, radius
                         )
+
+            elif op_name == "sweep":
+                if sketch is None:
+                    raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
+                control_pts = [[0.5, 0.0, 0.0], [0.6,0.0, 0.1], [0.6,0.0, 0.2]]
+                tempt_canvas = build123.protocol.build_sweep(
+                    tempt_canvas, sketch, control_pts
+                )
+
+
+
 
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
