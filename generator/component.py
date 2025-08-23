@@ -271,9 +271,8 @@ class Component:
             elif op_name == "sweep":
                 if sketch is None:
                     raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
-                control_pts = [[0.5, 0.0, 0.0], [0.6,0.0, 0.1], [0.6,0.0, 0.2]]
                 tempt_canvas = build123.protocol.build_sweep(
-                    tempt_canvas, sketch, control_pts
+                    tempt_canvas, sketch, self.path
                 )
 
 
