@@ -1,0 +1,11 @@
+{
+    "name": "leg_hole_mating",
+    "parameters": {
+        "x_length": "parent x_length * [0.15, 0.2]",
+        "y_length": "parent y_length",
+        "z_length": "parent z_length * [0.2, 0.2]",
+        "normal": [
+            "-z"
+        ]
+    }
+}

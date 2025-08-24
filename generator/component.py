@@ -5,6 +5,8 @@ import re
 import helper
 from pathlib import Path
 import ast
+import os
+import json
 
 class Component:
     def __init__(self, data: dict, parent=None, labels = [0]):
@@ -27,6 +29,7 @@ class Component:
         self.path = data.get('path')
 
         self.labels = labels
+        self.output_folder = Path(__file__).parent / "output"
 
     def param_init(self):
         """
@@ -281,6 +284,22 @@ class Component:
                     tempt_canvas
                 )
 
+            elif op_name == "mating_subtraction":
+                # ensure output folder exists
+                os.makedirs(self.output_folder, exist_ok=True)
+                
+                # build the file path
+                file_path = os.path.join(self.output_folder, f"mating_{self.name}.json")
+                
+                # prepare the data
+                data = {
+                    "name": self.name,
+                    "parameters": self.parameters
+                }
+                
+                # write to the file
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
 
 
             else:
@@ -292,7 +311,7 @@ class Component:
 
     def save_process(self, tempt_canvas, full_canvas):
         to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas, self.boolean)
-        output_dir = Path(__file__).parent / "output" / "history"
+        output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
         tmp_stl = output_dir / f"{self.process_count}.stl"
@@ -372,7 +391,7 @@ class Component:
 
             file_name = "-".join(str(n) for n in self.labels)
 
-            output_dir = Path(__file__).parent / "output" / "seperable"
+            output_dir = self.output_folder / "seperable"
             output_dir.mkdir(parents=True, exist_ok=True)
 
             tmp_stl = output_dir / f"{file_name}.stl"
