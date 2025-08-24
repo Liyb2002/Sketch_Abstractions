@@ -1,0 +1,26 @@
+{
+  "name": "mated_base",
+  "condition": "leg_hole_mating",
+  "boolean" : "addition",
+  "children": [
+    "connector"
+  ],
+  "variants": [
+    {
+      "name": "root",
+      "boolean" : "addition",
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": 0 
+        },
+      "cad_operations": [],
+      "parameters": {
+        "x_length": [0.5, 1],
+        "y_length": [3, 5],
+        "z_length": [0.15, 1]
+      }
+
+    }
+  ]
+}

@@ -1,11 +1,9 @@
 {
     "name": "leg_hole_mating",
     "parameters": {
-        "x_length": "parent x_length * [0.15, 0.2]",
-        "y_length": "parent y_length",
-        "z_length": "parent z_length * [0.2, 0.2]",
-        "normal": [
-            "-z"
-        ]
+        "x_length": 0.6168162487154802,
+        "y_length": 4.858013502872364,
+        "z_length": 1.3754690152967985,
+        "normal": "-z"
     }
 }

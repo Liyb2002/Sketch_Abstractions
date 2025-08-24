@@ -294,7 +294,7 @@ class Component:
                 # prepare the data
                 data = {
                     "name": self.name,
-                    "parameters": self.parameters
+                    "parameters": self.chosen_parameters
                 }
                 
                 # write to the file
