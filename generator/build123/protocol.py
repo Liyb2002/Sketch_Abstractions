@@ -155,6 +155,12 @@ def build_sweep(canvas, target_face, control_points, *, is_frenet=True, mode=Mod
     return canvas
 
 
+def build_mirror(canvas):
+    mirrored = mirror(objects=canvas.part, about=Plane.YZ)
+    canvas.part = (canvas.part + mirrored).clean()
+    return canvas
+
+
 def simulate_extrude(sketch, amount):
     with BuildPart() as temp:
         extrude(sketch, amount=amount)
@@ -172,6 +178,7 @@ def get_part(obj):
         return obj.part
     else:
         return obj
+
 
 def merge_canvas(canvas1, canvas2, boolean):
     add_parts = []

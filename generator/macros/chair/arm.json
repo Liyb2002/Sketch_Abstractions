@@ -16,13 +16,14 @@
          "z_location": "parent z_length"
         },
       "path": [
-    ["-parent x_length / 2 + 0.02", "-parent y_length / 3",  "parent z_length + 0.05"],
-    ["-parent x_length / 2 + 0.03", "-parent y_length / 3 + 0.2" , "parent z_length + 0.22"],
-    ["-parent x_length / 2 + 0.04", "-parent y_length / 3 + 0.25", "parent z_length + 0.25"]
+    ["-parent x_length / 2 + [0.02, 0.02]", "-parent y_length / 3",  "parent z_length + [0.05,0.05]"],
+    ["-parent x_length / 2 + [-0.01, 0.01]", "-parent y_length / 3 + [0.18, 0.22]" , "parent z_length + [0.18, 0.22]"],
+    ["-parent x_length / 2 + [0.02, 0.03]", "-parent y_length / 3 + [0.22, 0.26]", "parent z_length + [0.22, 0.26]"]
   ],
       "cad_operations": [
         { "name": "sketch_circle" },
-        { "name": "sweep" }
+        { "name": "sweep" },
+        { "name": "mirror" }
         
       ]
     }

@@ -275,7 +275,11 @@ class Component:
                 tempt_canvas = build123.protocol.build_sweep(
                     tempt_canvas, sketch, self.path
                 )
-
+                           
+            elif op_name == "mirror":
+                tempt_canvas = build123.protocol.build_mirror(
+                    tempt_canvas
+                )
 
 
 
@@ -300,34 +304,39 @@ class Component:
 
 
     def parse_eval_list(self, path_list):
-        """
-        Parse a path specification into numeric coordinates.
-        
-        Parameters:
-            path_list (list): list of sublists, each with 3 entries (float or string expressions)
-            parent: the parent component, with .chosen_parameters dict
-        
-        Returns:
-            list of [x, y, z] as floats
-        """
         coords = []
         for point in path_list:
             parsed_point = []
             for val in point:
                 if isinstance(val, (int, float)):
                     parsed_point.append(float(val))
+
+                elif isinstance(val, list) and len(val) == 2:
+                    # literal [min, max] range → sample
+                    lo, hi = float(val[0]), float(val[1])
+                    if lo > hi: lo, hi = hi, lo
+                    parsed_point.append(random.uniform(lo, hi))
+
                 elif isinstance(val, str):
-                    # Replace parent references with actual values
                     expr = val
+                    # Replace parent references
                     for pk, pv in self.parent.chosen_parameters.items():
                         expr = expr.replace(f"parent {pk}", str(pv))
-                    
-                    # Safely evaluate expression
+
+                    # Replace inline [a,b] ranges with sampled numbers
+                    def repl(m):
+                        lo, hi = float(m.group(1)), float(m.group(2))
+                        if lo > hi: lo, hi = hi, lo
+                        return str(random.uniform(lo, hi))
+
+                    expr = re.sub(r"\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]", repl, expr)
+
                     try:
                         parsed_val = eval(expr, {"__builtins__": {}}, {})
                     except Exception as e:
-                        raise ValueError(f"Failed to evaluate expression '{val}': {e}")
+                        raise ValueError(f"Failed to evaluate expression '{val}' -> '{expr}': {e}")
                     parsed_point.append(float(parsed_val))
+
                 else:
                     raise ValueError(f"Unsupported value type in path: {val}")
             coords.append(parsed_point)
