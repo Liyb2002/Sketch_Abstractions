@@ -269,6 +269,7 @@ class Component:
                         )
 
             elif op_name == "sweep":
+                self.path = self.parse_eval_list(self.path)
                 if sketch is None:
                     raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
                 tempt_canvas = build123.protocol.build_sweep(
@@ -296,6 +297,42 @@ class Component:
             self.process_count += 1
             to_save_canvas.part.export_stl(str(tmp_stl))
             to_save_canvas.part.export_step(str(tmp_step))
+
+
+    def parse_eval_list(self, path_list):
+        """
+        Parse a path specification into numeric coordinates.
+        
+        Parameters:
+            path_list (list): list of sublists, each with 3 entries (float or string expressions)
+            parent: the parent component, with .chosen_parameters dict
+        
+        Returns:
+            list of [x, y, z] as floats
+        """
+        coords = []
+        for point in path_list:
+            parsed_point = []
+            for val in point:
+                if isinstance(val, (int, float)):
+                    parsed_point.append(float(val))
+                elif isinstance(val, str):
+                    # Replace parent references with actual values
+                    expr = val
+                    for pk, pv in self.parent.chosen_parameters.items():
+                        expr = expr.replace(f"parent {pk}", str(pv))
+                    
+                    # Safely evaluate expression
+                    try:
+                        parsed_val = eval(expr, {"__builtins__": {}}, {})
+                    except Exception as e:
+                        raise ValueError(f"Failed to evaluate expression '{val}': {e}")
+                    parsed_point.append(float(parsed_val))
+                else:
+                    raise ValueError(f"Unsupported value type in path: {val}")
+            coords.append(parsed_point)
+
+        return coords
 
 
     def build(self, canvas=None, process_count = 0):
