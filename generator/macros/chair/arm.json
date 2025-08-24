@@ -16,9 +16,9 @@
          "z_location": "parent z_length"
         },
       "path": [
-    ["-parent x_length / 2", 0.0, 0.0],
-    ["-parent x_length / 2 + 0.02", 0.03, 0.1],
-    ["-parent x_length / 2 + 0.03", 0.15, 0.2]
+    ["-parent x_length / 2 + 0.02", "-parent y_length / 3",  "parent z_length + 0.05"],
+    ["-parent x_length / 2 + 0.03", "-parent y_length / 3 + 0.2" , "parent z_length + 0.22"],
+    ["-parent x_length / 2 + 0.04", "-parent y_length / 3 + 0.25", "parent z_length + 0.25"]
   ],
       "cad_operations": [
         { "name": "sketch_circle" },
