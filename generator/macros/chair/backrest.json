@@ -8,9 +8,9 @@
       "name": "standard_backrest",
       "boolean" : "addition",
       "parameters": {
-        "x_length": [0.3, 0.5],
-        "y_length": [0.015, 0.1],
-        "z_length": [0.3, 0.5]
+        "x_length": "parent x_length",
+        "y_length": [0.15, 1],
+        "z_length": [3, 5]
       },
       "cad_operations": [],
       "location": {

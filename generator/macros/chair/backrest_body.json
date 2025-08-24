@@ -22,7 +22,7 @@
           "name": "fillet_or_chamfer",
           "probability": 0.8,
           "sub_parameters": {
-            "radius": "[0.01, 0.02]",
+            "radius": "[0.1, 0.2]",
             "edges": [0, 1]
           }
         }

@@ -16,9 +16,9 @@
          "z_location": "parent z_length"
         },
       "path": [
-    ["-parent x_length / 2 + [0.02, 0.02]", "-parent y_length / 3",  "parent z_length + [0.05,0.05]"],
-    ["-parent x_length / 2 + [-0.01, 0.01]", "-parent y_length / 3 + [0.18, 0.22]" , "parent z_length + [0.18, 0.22]"],
-    ["-parent x_length / 2 + [0.02, 0.03]", "-parent y_length / 3 + [0.22, 0.26]", "parent z_length + [0.22, 0.26]"]
+    ["-parent x_length / 2 + [0.2, 0.2]", "-parent y_length / 3",  "parent z_length + [0.5,0.5]"],
+    ["-parent x_length / 2 + [-0.1, 0.1]", "-parent y_length / 3 + [1.8, 2.2]" , "parent z_length + [1.8, 2.2]"],
+    ["-parent x_length / 2 + [0.2, 0.3]", "-parent y_length / 3 + [2.2, 2.6]", "parent z_length + [2.2, 2.6]"]
   ],
       "cad_operations": [
         { "name": "sketch_circle" },

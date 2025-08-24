@@ -18,9 +18,9 @@
         },
       "cad_operations": [],
       "parameters": {
-        "x_length": [0.3, 0.5],
-        "y_length": [0.3, 0.5],
-        "z_length": [0.015, 0.1]
+        "x_length": [3, 5],
+        "y_length": [3, 5],
+        "z_length": [0.15, 1]
       }
 
     }

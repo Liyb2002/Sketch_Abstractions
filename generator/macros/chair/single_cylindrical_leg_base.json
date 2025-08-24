@@ -11,8 +11,8 @@
   "boolean" : "addition",
   "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "parent x_length * [0.8, 1.2]",
-    "y_length": "parent y_length * [1.5, 2.0]",
+    "x_length": "parent x_length * [0.6, 0.8]",
+    "y_length": "parent y_length * [1.2, 1.5]",
     "z_length": "parent z_length * [0.2, 0.4]",
     "normal": ["-z"]
   },
