@@ -1,6 +1,6 @@
 {
   "name": "mated_base",
-  "condition": "leg_hole_mating",
+  "mating_condition": "leg_hole_mating",
   "boolean" : "addition",
   "children": [
     "connector"

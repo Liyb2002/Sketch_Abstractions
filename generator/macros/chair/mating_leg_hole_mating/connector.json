@@ -1,15 +1,14 @@
 {
   "name": "connector",
   "children" : [],
-  "parent": "root_mated_base",
+  "parent": "root",
   "variants": [
 
     {
   "name": "single_cylindrical_leg_body",
   "boolean" : "addition",
-  "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "mated x_length ",
+    "x_length": "parent x_length ",
     "y_length": "parent y_length ",
     "z_length": "parent z_length",
     "normal": ["-z"]

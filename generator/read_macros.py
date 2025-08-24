@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import component
 import random
+import os 
 
 def load_component(json_path, parent=None, labels = [0]):
     """
@@ -67,18 +68,41 @@ def read_macro(folder_path):
     return macro_name, root_component
 
 
-def execute(component_obj):
+def read_matings(macro_path, output_path):
+    # Loop through each subfolder inside macro_path
+    for subfolder in os.listdir(macro_path):
+        subfolder_path = os.path.join(macro_path, subfolder)
+
+        # Only process directories
+        if not os.path.isdir(subfolder_path):
+            continue
+
+        # Check if {subfolder}.json exists in output_path
+        json_file = os.path.join(output_path, f"{subfolder}.json")
+        if os.path.exists(json_file):
+            print(f"Executing {subfolder}...")
+
+            # Step 1: Read macro
+            macro_name, root_component = read_macro(subfolder_path)
+
+            # Step 2: Execute
+            execute(root_component, output_path)
+
+    
+
+
+
+def execute(component_obj, output_path):
     """
     Execute a Component and all its children recursively.
     Export result to .stl and .step
     """
-    output_dir = Path(__file__).parent / "output"
-    output_dir.mkdir(exist_ok=True)
+    output_path.mkdir(exist_ok=True)
 
     canvas, _, _ = component_obj.build()  # build full hierarchy
 
-    stl_path = output_dir / f"{component_obj.name}.stl"
-    step_path = output_dir / f"{component_obj.name}.step"
+    stl_path = output_path / f"{component_obj.name}.stl"
+    step_path = output_path / f"{component_obj.name}.step"
 
     canvas.part.export_stl(str(stl_path))
     canvas.part.export_step(str(step_path))
@@ -89,12 +113,9 @@ def execute(component_obj):
 
 if __name__ == "__main__":
     macro_folder = Path(__file__).parent / "macros" / "chair"
-    macro_name, root_component = read_macro(macro_folder)
+    output_folder = output_dir = Path(__file__).parent / "output"
+    
+    # macro_name, root_component = read_macro(macro_folder)
+    # execute(root_component, output_folder)
 
-    # print(f"Macro: {macro_name}")
-    # print("Components:")
-    # for comp in components:
-    #     comp.describe()
-
-    # Execute the first root component
-    execute(root_component)
+    read_matings(macro_folder, output_folder)
