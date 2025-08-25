@@ -2,7 +2,9 @@
   "name": "mated_base",
   "boolean" : "addition",
   "children": [
-    "connector"
+    "connector",
+    "axle_1",
+    "axle_2"
   ],
   "variants": [
     {
@@ -18,7 +20,7 @@
       "parameters": {
         "x_length": [0.5, 1],
         "y_length": [3, 5],
-        "z_length": [0.15, 1]
+        "z_length": [0.15, 0.5]
       }
 
     }

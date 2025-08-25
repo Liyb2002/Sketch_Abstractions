@@ -160,6 +160,15 @@ class Component:
 
                     expr = re.sub(r'parent\s+([a-zA-Z_]\w*)', replace_parent, expr)
 
+                # Replace mating params (like "mating z_length")
+                def replace_mating(match):
+                    param = match.group(1)
+                    if param not in self.mating_params:
+                        raise ValueError(f"Mating parameter '{param}' not found for {self.name}")
+                    return str(self.mating_params[param])
+
+                expr = re.sub(r'mating\s+([a-zA-Z_]\w*)', replace_mating, expr)
+
                 # Replace own parameters
                 for param_name, param_value in self.chosen_parameters.items():
                     expr = expr.replace(param_name, str(param_value))

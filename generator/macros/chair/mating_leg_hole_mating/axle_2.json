@@ -1,29 +1,27 @@
 {
   "name": "connector",
   "mating_reference": "leg_hole_mating",
-  "children" : [],
+  "children" : ["axle_2_beam"],
   "parent": "root",
   "variants": [
 
     {
-  "name": "leg_connector",
+  "name": "base_axle_2",
   "boolean" : "addition",
   "mating_reference": "leg_hole_mating",
   "parameters": {
-    "x_length": "mating x_length ",
-    "y_length": "mating y_length ",
-    "z_length": "mating z_length",
+    "x_length": "parent y_length ",
+    "y_length": "mating x_length ",
+    "z_length": "parent z_length",
     "normal": ["-z"]
   },
   "quantity": 1,
       "location": {
          "x_location": 0, 
          "y_location": 0, 
-         "z_location": 0
+         "z_location": "- mating z_length"
         },
   "cad_operations": [
-        { "name": "sketch_circle" },
-        { "name": "extrude" }
   ]
 }
   ]
