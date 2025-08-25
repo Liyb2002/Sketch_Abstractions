@@ -10,17 +10,25 @@
   "boolean" : "addition",
   "mating_reference": "leg_hole_mating",
   "parameters": {
-    "x_length": "parent x_length ",
+    "x_length": "parent x_length * [1.2, 1.5]",
     "y_length": "parent y_length ",
     "z_length": "parent z_length",
     "normal": ["-z"]
   },
-  "quantity": 1,
-      "location": {
-         "x_location": 0, 
-         "y_location": 0, 
-         "z_location": 0
-        },
+  "quantity": 2,
+  "locations": 
+  
+  [{
+      "x_location": 0, 
+      "y_location": "y_length / 2", 
+      "z_location": "- z_length"
+    },
+{
+      "x_location": 0, 
+      "y_location": "- y_length / 2", 
+      "z_location": "- z_length"
+    }
+  ],
   "cad_operations": [
         { "name": "build_sphere" }
   ]

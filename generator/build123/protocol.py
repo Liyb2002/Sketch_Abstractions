@@ -160,6 +160,32 @@ def build_mirror(canvas):
     canvas.part = (canvas.part + mirrored).clean()
     return canvas
 
+def build_sphere(canvas, radius, location):
+    x, y, z = (float(location[0]), float(location[1]), float(location[2]))
+
+    # Build the sphere as its own Part at the given location
+    with BuildPart() as _tmp:
+        with Locations(Location((x, y, z))):
+            Sphere(radius)
+    sphere_part = _tmp.part
+
+    # If no canvas provided, return the BuildPart containing just the sphere
+    if canvas is None:
+        return _tmp
+
+    # Otherwise, expect something with a `.part` attribute and merge
+    if not hasattr(canvas, "part"):
+        raise TypeError("canvas must have a 'part' attribute (e.g., a BuildPart)")
+
+    if canvas.part is None:
+        canvas.part = sphere_part
+    else:
+        # Combine like your mirror example: (existing + new).clean()
+        canvas.part = (canvas.part + sphere_part).clean()
+
+    return canvas
+
+
 
 def simulate_extrude(sketch, amount):
     with BuildPart() as temp:

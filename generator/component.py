@@ -343,6 +343,13 @@ class Component:
                 with open(file_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=4)
 
+            elif op_name == "build_sphere":
+                radius = x_len / 2
+                location = [x,y,z]
+                tempt_canvas = build123.protocol.build_sphere(
+                    tempt_canvas, radius, location
+                    )
+
 
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")

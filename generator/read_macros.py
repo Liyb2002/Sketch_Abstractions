@@ -42,11 +42,11 @@ def load_component(json_path, parent=None, labels = [0]):
     return c
 
 
-def read_macro(folder_path):
+def read_macro(folder_path, idx = 0):
     folder_path = Path(folder_path)
 
     # Recursive loader for children
-    def load_with_children(name, parent=None, labels = [0]):
+    def load_with_children(name, parent=None, labels = [idx]):
         json_file = folder_path / f"{name}.json"
         comp = load_component(json_file, parent=parent, labels= labels)
 
@@ -71,6 +71,8 @@ def read_macro(folder_path):
 
 def read_matings(macro_path, output_path):
     # Loop through each subfolder inside macro_path
+
+    count = 1
     for subfolder in os.listdir(macro_path):
         subfolder_path = os.path.join(macro_path, subfolder)
 
@@ -84,13 +86,14 @@ def read_matings(macro_path, output_path):
             print(f"Executing {subfolder}...")
 
             # Step 1: Read macro
-            macro_name, root_component = read_macro(subfolder_path)
+            macro_name, root_component = read_macro(subfolder_path, count)
 
             # Step 2: Execute
             execute(root_component, output_path)
+        
+        count += 1
 
     
-
 
 
 def execute(component_obj, output_path):
@@ -116,7 +119,7 @@ if __name__ == "__main__":
     macro_folder = Path(__file__).parent / "macros" / "chair"
     output_folder = output_dir = Path(__file__).parent / "output"
     
-    # macro_name, root_component = read_macro(macro_folder)
-    # execute(root_component, output_folder)
+    macro_name, root_component = read_macro(macro_folder)
+    execute(root_component, output_folder)
 
     read_matings(macro_folder, output_folder)

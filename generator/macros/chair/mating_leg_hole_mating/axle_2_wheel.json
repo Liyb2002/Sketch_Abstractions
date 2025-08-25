@@ -1,0 +1,38 @@
+{
+  "name": "connector",
+  "mating_reference": "leg_hole_mating",
+  "children" : [],
+  "parent": "axle_2",
+  "variants": [
+
+    {
+  "name": "base_axle_2_wheel",
+  "boolean" : "addition",
+  "mating_reference": "leg_hole_mating",
+  "parameters": {
+    "x_length": "parent y_length * [1.2, 1.5]",
+    "y_length": "parent y_length ",
+    "z_length": "parent z_length",
+    "normal": ["-z"]
+  },
+  "quantity": 2,
+  "locations": 
+  
+  [{
+      "x_location": "parent x_length / 2", 
+      "y_location": "0", 
+      "z_location": "- z_length"
+    },
+{
+      "x_location": "- parent x_length / 2", 
+      "y_location": "0", 
+      "z_location": "- z_length"
+    }
+  ],
+  "cad_operations": [
+        { "name": "build_sphere" }
+  ]
+}
+  ]
+
+}

@@ -1,7 +1,7 @@
 {
   "name": "connector",
   "mating_reference": "leg_hole_mating",
-  "children" : ["axle_1_beam"],
+  "children" : ["axle_1_beam", "axle_1_wheel"],
   "parent": "root",
   "variants": [
 
@@ -19,7 +19,7 @@
       "location": {
          "x_location": 0, 
          "y_location": 0, 
-         "z_location": "- mating z_length"
+         "z_location": "- mating z_length - z_length"
         },
   "cad_operations": [
   ]
