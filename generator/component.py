@@ -27,6 +27,9 @@ class Component:
         self.boolean = data.get('boolean')
         self.condition = data.get('condition')
         self.path = data.get('path')
+        
+        self.mating_reference = data.get('mating_reference')
+        self.set_mating_params(data.get('mating_reference'))
 
         self.labels = labels
         self.output_folder = Path(__file__).parent / "output"
@@ -38,6 +41,7 @@ class Component:
         - Parent references (e.g., 'parent x_length') → inherit from parent
         - Parent refs with multiplier (e.g., 'parent x_length * [0.2, 0.8]')
         → inherit from parent, multiply by random in range
+        - Mating references (e.g., 'mating x_length') → inherit from mating_params
         - Categorical (list of strings) → first element
         - Fixed values → used directly
         """
@@ -87,7 +91,16 @@ class Component:
                 else:
                     self.chosen_parameters[k] = base_value
 
-            # Case 3: categorical or fixed value
+            # Case 3: mating reference
+            elif isinstance(v, str) and v.startswith("mating "):
+                mating_param = v.replace("mating", "").strip()
+                if not hasattr(self, "mating_params") or self.mating_params is None:
+                    raise ValueError(f"Parameter {k} requires mating_params, but none found.")
+                if mating_param not in self.mating_params:
+                    raise KeyError(f"Mating parameter '{mating_param}' not found in mating_params.")
+                self.chosen_parameters[k] = self.mating_params[mating_param]
+
+            # Case 4: categorical or fixed value
             else:
                 self.chosen_parameters[k] = v[0] if isinstance(v, list) else v
 
@@ -96,6 +109,26 @@ class Component:
             self.absolute_locations = [self.compute_absolute_location(loc) for loc in self.locations]
         else:
             self.absolute_locations = [self.compute_absolute_location(self.location)]
+
+
+    def set_mating_params(self, mating_reference):
+        if mating_reference is None:
+            return
+        
+        # Build the file path
+        output_dir = Path(__file__).parent / "output"
+        file_path = output_dir / f"mating_{mating_reference}.json"
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                mating_json = json.load(f)
+            self.mating_params = mating_json["parameters"]
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Could not find {file_path}")
+        except KeyError:
+            raise KeyError(f"'parameters' key not found in {file_path}")
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON in {file_path}")
 
 
     def compute_absolute_location(self, rel_loc):

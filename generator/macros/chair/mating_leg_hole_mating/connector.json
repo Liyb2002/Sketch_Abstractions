@@ -1,5 +1,6 @@
 {
   "name": "connector",
+  "mating_reference": "leg_hole_mating",
   "children" : [],
   "parent": "root",
   "variants": [
@@ -7,10 +8,11 @@
     {
   "name": "single_cylindrical_leg_body",
   "boolean" : "addition",
+  "mating_reference": "leg_hole_mating",
   "parameters": {
-    "x_length": "parent x_length ",
-    "y_length": "parent y_length ",
-    "z_length": "parent z_length",
+    "x_length": "mating x_length ",
+    "y_length": "mating y_length ",
+    "z_length": "mating z_length",
     "normal": ["-z"]
   },
   "quantity": 1,

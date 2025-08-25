@@ -24,7 +24,8 @@ def load_component(json_path, parent=None, labels = [0]):
             'quantity': variant.get("quantity", 1),
             'locations': variant.get("locations"),
             'condition': variant.get('condition', 'None'),
-            'path' : variant.get('path', [])
+            'path' : variant.get('path', []),
+            'mating_reference' : variant.get('mating_reference', None)
         }
     else:
         data = {

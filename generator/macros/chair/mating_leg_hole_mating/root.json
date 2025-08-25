@@ -1,14 +1,14 @@
 {
   "name": "mated_base",
-  "mating_condition": "leg_hole_mating",
   "boolean" : "addition",
   "children": [
     "connector"
   ],
   "variants": [
     {
-      "name": "root",
+      "name": "mated_base",
       "boolean" : "addition",
+      "mating_reference": "leg_hole_mating",
       "location": {
          "x_location": 0, 
          "y_location": 0, 
