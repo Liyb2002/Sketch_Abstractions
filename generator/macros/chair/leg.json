@@ -25,7 +25,85 @@
   ],
   "cad_operations": [   
   ]
-}
+},
+
+
+   {
+      "name": "four_cylindrical_leg",
+        "boolean" : "addition",
+      "parameters": {
+        "x_length": [0.1, 0.5],
+        "y_length": [0.1, 0.5],
+        "z_length": [3, 6]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+      ]
+    },
+
+
+
+   {
+      "name": "four_rectangle_leg",
+        "boolean" : "addition",
+      "parameters": {
+        "x_length": [0.1, 0.5],
+        "y_length": [0.1, 0.5],
+        "z_length": [3, 6]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" }
+      ]
+    }
+
 
 
 

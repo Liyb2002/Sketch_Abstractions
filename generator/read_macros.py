@@ -92,8 +92,18 @@ def read_matings(macro_path, output_path):
             execute(root_component, output_path)
         
         count += 1
-
     
+        for name in os.listdir(output_path):
+            if name.lower().endswith(".json"):
+                file_path = os.path.join(output_path, name)
+                if os.path.isfile(file_path):
+                    try:
+                        os.remove(file_path)
+                    except OSError as e:
+                        print(f"Warning: could not remove {file_path}: {e}")
+
+
+
 
 
 def execute(component_obj, output_path):

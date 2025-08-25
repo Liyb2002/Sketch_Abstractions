@@ -28,9 +28,79 @@
         { "name": "extrude" },
         { "name": "mating_subtraction"}
   ]
+},
+
+
+
+
+
+    {
+  "name": "single_cylindrical_leg_base",
+  "boolean" : "addition",
+  "condition" : "single_cylindrical_leg",
+  "parameters": {
+    "x_length": "parent x_length * [0.6, 0.8]",
+    "y_length": "parent y_length * [1.2, 1.5]",
+    "z_length": "parent z_length * [0.2, 0.4]",
+    "normal": ["-z"]
+  },
+  "quantity": 1,
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "- parent z_length"
+        },
+  "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+  ]
+},
+
+
+  {
+  "name": "single_triangle_leg_base",
+  "boolean" : "addition",
+  "condition" : "single_cylindrical_leg",
+  "parameters": {
+    "x_length": "parent x_length * [0.5, 0.9]",
+    "y_length": "parent y_length * [0.6, 0.9]",
+    "z_length": "parent z_length * [0.2, 0.4]",
+    "normal": ["-z"]
+  },
+  "quantity": 1,
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "- parent z_length - z_length"
+        },
+  "cad_operations": [
+        { "name": "sketch_triangle" },
+        { "name": "extrude" }
+  ]
+},
+
+
+{
+  "name": "single_square_leg_base",
+  "boolean" : "addition",
+  "condition" : "single_cylindrical_leg",
+  "parameters": {
+    "x_length": "parent x_length * [0.5, 0.9]",
+    "y_length": "parent y_length * [0.6, 0.9]",
+    "z_length": "parent z_length * [0.2, 0.4]",
+    "normal": ["-z"]
+  },
+  "quantity": 1,
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "- parent z_length - z_length"
+        },
+  "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" }
+  ]
 }
-
-
   ]
 
 }
