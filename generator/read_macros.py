@@ -5,7 +5,7 @@ import random
 import os 
 import helper
 
-def load_component(json_path, parent=None, labels = [0]):
+def load_component(json_path, output_path, parent=None, labels = [0]):
     """
     Reads JSON file, picks a variant if any, and returns a Component instance.
     """
@@ -39,17 +39,17 @@ def load_component(json_path, parent=None, labels = [0]):
             'locations': comp_dict.get("locations")
         }
 
-    c = component.Component(data, parent=parent, labels = labels)
+    c = component.Component(data, parent=parent, labels = labels, output_path = output_path)
     return c
 
 
-def read_macro(folder_path, idx = 0):
+def read_macro(folder_path, output_folder, idx = 0):
     folder_path = Path(folder_path)
 
     # Recursive loader for children
     def load_with_children(name, parent=None, labels = [idx]):
         json_file = folder_path / f"{name}.json"
-        comp = load_component(json_file, parent=parent, labels= labels)
+        comp = load_component(json_file, output_folder, parent=parent, labels= labels)
 
         with open(json_file, 'r') as f:
             comp_dict = json.load(f)
@@ -87,7 +87,7 @@ def read_matings(macro_path, output_path):
             print(f"Executing {subfolder}...")
 
             # Step 1: Read macro
-            macro_name, root_component = read_macro(subfolder_path, count)
+            macro_name, root_component = read_macro(subfolder_path, output_path, count)
 
             # Step 2: Execute
             execute(root_component, output_path)
@@ -121,7 +121,7 @@ def execute(component_obj, output_path):
 
 
     helper.func_export_stl(canvas, str(stl_path))
-    helper.func_export_stl(canvas, str(step_path))
+    helper.func_export_step(canvas, str(step_path))
 
     print(f"✅ Exported full assembly: {stl_path} and {step_path}")
     return None
@@ -130,13 +130,13 @@ def execute(component_obj, output_path):
 if __name__ == "__main__":
     base = Path(__file__).resolve().parent
     macro_folder = base / "macros" / "chair"
-    output_folder = base / "output"
+    output_folder = base.parent / "output"
 
     # Clean the two subfolders (auto-create + wipe)
     helper.clean_dir(output_folder / "history")
     helper.clean_dir(output_folder / "seperable")
 
     # Run your pipeline
-    macro_name, root_component = read_macro(macro_folder)
+    macro_name, root_component = read_macro(macro_folder, output_folder)
     execute(root_component, output_folder)
     read_matings(macro_folder, output_folder)

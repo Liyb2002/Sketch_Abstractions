@@ -10,7 +10,7 @@ import json
 
 
 class Component:
-    def __init__(self, data: dict, parent=None, labels = [0]):
+    def __init__(self, data: dict, parent=None, labels = [0], output_path = Path(__file__).parent.parent / "output"):
         """
         Initializes the component from its chosen variant dict.
         :param data: dict of chosen variant
@@ -33,7 +33,7 @@ class Component:
         self.set_mating_params(data.get('mating_reference'))
 
         self.labels = labels
-        self.output_folder = Path(__file__).parent / "output"
+        self.output_folder = output_path
 
     def param_init(self):
         """
@@ -447,7 +447,6 @@ class Component:
 
             tmp_stl = output_dir / f"{file_name}.stl"
             tmp_step = output_dir / f"{file_name}.step"
-
 
             helper.func_export_stl(tempt_canvas, str(tmp_stl))
             helper.func_export_step(tempt_canvas, str(tmp_step))
