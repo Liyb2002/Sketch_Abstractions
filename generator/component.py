@@ -9,7 +9,6 @@ import os
 import json
 
 
-
 class Component:
     def __init__(self, data: dict, parent=None, labels = [0]):
         """
@@ -369,8 +368,9 @@ class Component:
         tmp_step = output_dir / f"{self.process_count}.step"
         if to_save_canvas is not None and to_save_canvas.part is not None:
             self.process_count += 1
-            to_save_canvas.part.export_stl(str(tmp_stl))
-            to_save_canvas.part.export_step(str(tmp_step))
+
+            helper.func_export_stl(to_save_canvas, str(tmp_stl))
+            helper.func_export_step(to_save_canvas, str(tmp_step))
 
 
     def parse_eval_list(self, path_list):
@@ -448,8 +448,9 @@ class Component:
             tmp_stl = output_dir / f"{file_name}.stl"
             tmp_step = output_dir / f"{file_name}.step"
 
-            tempt_canvas.part.export_stl(str(tmp_stl))
-            tempt_canvas.part.export_step(str(tmp_step))
+
+            helper.func_export_stl(tempt_canvas, str(tmp_stl))
+            helper.func_export_step(tempt_canvas, str(tmp_step))
 
 
         return self.main_canvas, self.process_count, tempt_canvas

@@ -3,6 +3,7 @@ from pathlib import Path
 import component
 import random
 import os 
+import helper
 
 def load_component(json_path, parent=None, labels = [0]):
     """
@@ -118,18 +119,24 @@ def execute(component_obj, output_path):
     stl_path = output_path / f"{component_obj.name}.stl"
     step_path = output_path / f"{component_obj.name}.step"
 
-    canvas.part.export_stl(str(stl_path))
-    canvas.part.export_step(str(step_path))
+
+    helper.func_export_stl(canvas, str(stl_path))
+    helper.func_export_stl(canvas, str(step_path))
 
     print(f"✅ Exported full assembly: {stl_path} and {step_path}")
     return None
 
 
 if __name__ == "__main__":
-    macro_folder = Path(__file__).parent / "macros" / "chair"
-    output_folder = output_dir = Path(__file__).parent / "output"
-    
+    base = Path(__file__).resolve().parent
+    macro_folder = base / "macros" / "chair"
+    output_folder = base / "output"
+
+    # Clean the two subfolders (auto-create + wipe)
+    helper.clean_dir(output_folder / "history")
+    helper.clean_dir(output_folder / "seperable")
+
+    # Run your pipeline
     macro_name, root_component = read_macro(macro_folder)
     execute(root_component, output_folder)
-
     read_matings(macro_folder, output_folder)
