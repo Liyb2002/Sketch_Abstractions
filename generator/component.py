@@ -8,6 +8,8 @@ import ast
 import os
 import json
 
+
+
 class Component:
     def __init__(self, data: dict, parent=None, labels = [0]):
         """
