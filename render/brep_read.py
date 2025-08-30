@@ -18,6 +18,10 @@ from OCC.Core.BRep import BRep_Tool
 from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
 from OCC.Core.GeomAbs import GeomAbs_BSplineCurve
 from OCC.Core.Geom import Geom_BSplineCurve
+from OCC.Core.BRep import BRep_Tool
+from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+from OCC.Core.GeomAbs import GeomAbs_BSplineCurve
+from OCC.Core.Geom import Geom_BSplineCurve
 
 
 from typing import List, Dict, Tuple, Any
@@ -179,32 +183,45 @@ def create_face_node_gnn(face):
 # 4)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
 
 def create_edge_node(edge):
-    # Underlying curve + edge's trimmed parameter range
-    h_curve, first, last = BRep_Tool.Curve(edge)
-    adaptor = GeomAdaptor_Curve(h_curve)
-    curve_type = adaptor.GetType()
+    # Get underlying curve + edge param range
+    h_curve, u_first, u_last = BRep_Tool.Curve(edge)
+    adap = BRepAdaptor_Curve(edge)   # use edge-aware adaptor
+    ctype = adap.GetType()
 
     def p2t(p):
         return (float(p.X()), float(p.Y()), float(p.Z()))
 
-    if curve_type == GeomAbs_BSplineCurve:
-        # Downcast directly
+    # Endpoints (in the edge's trimmed domain)
+    p_start = adap.Value(u_first)
+    p_end   = adap.Value(u_last)
+
+    if ctype == GeomAbs_BSplineCurve:
         bs = Geom_BSplineCurve.DownCast(h_curve)
         if bs is None:
-            raise RuntimeError("Curve claimed to be BSpline, but DownCast failed")
+            # Very defensive: if downcast fails, just sample start/mid/end
+            u_mid = 0.5 * (u_first + u_last)
+            p_mid = adap.Value(u_mid)
+            return [*p2t(p_start), *p2t(p_mid), *p2t(p_end), 5]
 
-        # Always 3 control points in your setup
-        cp1 = p2t(bs.Pole(1))
-        cp2 = p2t(bs.Pole(2))
-        cp3 = p2t(bs.Pole(3))
-        return [*cp1, *cp2, *cp3, 5]  # 9 coords + type
+        nb_poles = bs.NbPoles()
+        deg = bs.Degree()
+
+        # If it's really a single 3-pole quadratic span, use the true control points
+        if nb_poles == 3:
+            cp1 = p2t(bs.Pole(1))
+            cp2 = p2t(bs.Pole(2))
+            cp3 = p2t(bs.Pole(3))
+            return [*cp1, *cp2, *cp3, 5]
+
+        # Fallback: represent the trimmed edge by 3 *sampled* points.
+        # (These are not true control points, but they’ll reproduce the shape
+        #  reasonably when you render as a quadratic Bézier.)
+        u_mid = 0.5 * (u_first + u_last)
+        p_mid = adap.Value(u_mid)
+        return [*p2t(p_start), *p2t(p_mid), *p2t(p_end), 5]
 
     # Straight line (everything else)
-    p_start = adaptor.Value(first)
-    p_end   = adaptor.Value(last)
-    start = p2t(p_start)
-    end   = p2t(p_end)
-    return [*start, *end, 0.0, 0.0, 0.0, 1]  # 10 values total
+    return [*p2t(p_start), *p2t(p_end), 0.0, 0.0, 0.0, 1]
 
 
 
@@ -240,7 +257,6 @@ def vis_stroke_node_features(stroke_node_features):
 
         # Update min and max limits based on strokes (ignoring circles)
         if stroke[-1] == 1:
-            continue
             # Straight line: [start(x,y,z), end(x,y,z), 0,0,0, 1]
             start = np.array(stroke[0:3], dtype=float)
             end   = np.array(stroke[3:6], dtype=float)
