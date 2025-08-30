@@ -1,27 +1,32 @@
+from math import pi, atan2, fmod
+
 from OCC.Core.STEPControl import STEPControl_Reader
 from OCC.Core.TopoDS import TopoDS_Shape, topods
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX
+
 from OCC.Core.BRepTools import breptools
 from OCC.Core.BRep import BRep_Tool
-from OCC.Core.GProp import GProp_GProps
 from OCC.Core.BRepGProp import brepgprop
+from OCC.Core.GProp import GProp_GProps
 
-from OCC.Core.Geom import Geom_CylindricalSurface
-from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
-from OCC.Core.GeomAbs import GeomAbs_SurfaceType
-from OCC.Core.gp import gp_Vec
-from OCC.Core.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Circle
-from OCC.Core.Geom import Geom_Circle, Geom_Line
-
-from OCC.Core.BRep import BRep_Tool
+from OCC.Core.Geom import (
+    Geom_CylindricalSurface,
+    Geom_Circle,
+    Geom_Line,
+    Geom_BSplineCurve,
+)
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
 from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
-from OCC.Core.GeomAbs import GeomAbs_BSplineCurve
-from OCC.Core.Geom import Geom_BSplineCurve
-from OCC.Core.BRep import BRep_Tool
-from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
-from OCC.Core.GeomAbs import GeomAbs_BSplineCurve
-from OCC.Core.Geom import Geom_BSplineCurve
+from OCC.Core.GeomAbs import (
+    GeomAbs_SurfaceType,
+    GeomAbs_Cylinder,
+    GeomAbs_Plane,
+    GeomAbs_Circle,
+    GeomAbs_BSplineCurve,
+)
+
+from OCC.Core.gp import gp_Vec, gp_Ax2
 
 
 from typing import List, Dict, Tuple, Any
@@ -34,6 +39,9 @@ import numpy as np
 
 from scipy.optimize import least_squares
 from scipy.interpolate import splprep, splev, CubicSpline
+
+
+import helper
 
 def read_step_file(filename):
     step_reader = STEPControl_Reader()
@@ -179,49 +187,71 @@ def create_face_node_gnn(face):
 # 1)Straight Line: Point_1 (3 value), Point_2 (3 value), 0, 0, 0, 1
 # 2)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
 # 3)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
-# 4)Arc: Point_1 (3 value), Point_2 (3 value), Center (3 value), 4
+# 4)Arc: center (3 value), normal (3 value), radius (1 value), angle_start (1 value), sweep (1 value), 4
 # 4)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
 
 def create_edge_node(edge):
-    # Get underlying curve + edge param range
     h_curve, u_first, u_last = BRep_Tool.Curve(edge)
-    adap = BRepAdaptor_Curve(edge)   # use edge-aware adaptor
+    adap = BRepAdaptor_Curve(edge)
     ctype = adap.GetType()
 
     def p2t(p):
         return (float(p.X()), float(p.Y()), float(p.Z()))
 
-    # Endpoints (in the edge's trimmed domain)
-    p_start = adap.Value(u_first)
-    p_end   = adap.Value(u_last)
+    # --- ARC (quarter circle) detection ---
+    if ctype == GeomAbs_Circle:
+        circ   = adap.Circle()
+        center = circ.Location()
+        radius = circ.Radius()
 
+        p_start = adap.Value(u_first)
+        p_end   = adap.Value(u_last)
+
+        # Measure swept angle to confirm quarter arc
+        # Build OCC local frame so angles are consistent:
+        ax2  = gp_Ax2(center, circ.Axis().Direction())
+        xdir = ax2.XDirection(); ydir = ax2.YDirection()
+
+        def angle_of(p):
+            vx = (p.X()-center.X())*xdir.X() + (p.Y()-center.Y())*xdir.Y() + (p.Z()-center.Z())*xdir.Z()
+            vy = (p.X()-center.X())*ydir.X() + (p.Y()-center.Y())*ydir.Y() + (p.Z()-center.Z())*ydir.Z()
+            return atan2(vy, vx)
+
+        a0 = angle_of(p_start); a1 = angle_of(p_end)
+        # shortest signed difference into (-pi, pi]
+        d = a1 - a0
+        if d >  pi: d -= 2*pi
+        if d <= -pi: d += 2*pi
+
+        if abs(abs(d) - pi/2) < 1e-4:
+            return [
+                float(p_start.X()), float(p_start.Y()), float(p_start.Z()),
+                float(p_end.X()),   float(p_end.Y()),   float(p_end.Z()),
+                float(center.X()),  float(center.Y()),  float(center.Z()),
+                4
+            ]
+
+    # --- BSPLINE (3 control points) ---
     if ctype == GeomAbs_BSplineCurve:
         bs = Geom_BSplineCurve.DownCast(h_curve)
-        if bs is None:
-            # Very defensive: if downcast fails, just sample start/mid/end
-            u_mid = 0.5 * (u_first + u_last)
-            p_mid = adap.Value(u_mid)
-            return [*p2t(p_start), *p2t(p_mid), *p2t(p_end), 5]
-
-        nb_poles = bs.NbPoles()
-        deg = bs.Degree()
-
-        # If it's really a single 3-pole quadratic span, use the true control points
-        if nb_poles == 3:
+        if bs is not None and bs.NbPoles() == 3:
             cp1 = p2t(bs.Pole(1))
             cp2 = p2t(bs.Pole(2))
             cp3 = p2t(bs.Pole(3))
             return [*cp1, *cp2, *cp3, 5]
 
-        # Fallback: represent the trimmed edge by 3 *sampled* points.
-        # (These are not true control points, but they’ll reproduce the shape
-        #  reasonably when you render as a quadratic Bézier.)
-        u_mid = 0.5 * (u_first + u_last)
-        p_mid = adap.Value(u_mid)
+        # Fallback: sample start/mid/end to preserve your 3-pt encoding
+        p_start = adap.Value(u_first)
+        p_mid   = adap.Value(0.5 * (u_first + u_last))
+        p_end   = adap.Value(u_last)
         return [*p2t(p_start), *p2t(p_mid), *p2t(p_end), 5]
 
-    # Straight line (everything else)
+    # --- STRAIGHT LINE (default) ---
+    p_start = adap.Value(u_first)
+    p_end   = adap.Value(u_last)
     return [*p2t(p_start), *p2t(p_end), 0.0, 0.0, 0.0, 1]
+
+
 
 
 
@@ -274,14 +304,117 @@ def vis_stroke_node_features(stroke_node_features):
             continue
 
         if stroke[-1] == 2:
-            # Circle face
-            x_values, y_values, z_values = plot_circle(stroke)
-            ax.plot(x_values, y_values, z_values, color='red', alpha=1, linewidth=0.5)
+            # Circle: [center(3), normal(3), 0, radius, 0, 2]
+            cx, cy, cz, nx, ny, nz, _, r, _ = (float(v) for v in stroke[:9])
+            center = np.array([cx, cy, cz], dtype=float)
+            normal = np.array([nx, ny, nz], dtype=float)
+
+            # Normalize normal; if degenerate, skip
+            nlen = np.linalg.norm(normal)
+            if nlen < 1e-12:
+                continue
+            normal /= nlen
+
+            # Build in-plane orthonormal basis (xdir, ydir) ⟂ normal
+            up = np.array([0.0, 0.0, 1.0]) if abs(normal[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
+            xdir = np.cross(normal, up)
+            if np.linalg.norm(xdir) < 1e-12:
+                up = np.array([0.0, 1.0, 0.0])
+                xdir = np.cross(normal, up)
+            xdir /= np.linalg.norm(xdir)
+            ydir = np.cross(normal, xdir)
+
+            # Sample full circle
+            theta = np.linspace(0.0, 2.0 * np.pi, 200)
+            pts = center[None, :] + r * (np.cos(theta)[:, None] * xdir + np.sin(theta)[:, None] * ydir)
+            x_values, y_values, z_values = pts[:, 0], pts[:, 1], pts[:, 2]
+
+            # (By your convention, we do NOT update bounds for circles)
+            ax.plot(x_values, y_values, z_values, color='black', alpha=1, linewidth=0.5)
             continue
 
+        if stroke[-1] == 3:
+            # Cylinder face: [center(3), normal(3), height, radius, 0, 3]
+            cx, cy, cz, nx, ny, nz, h, r, _ = (float(v) for v in stroke[:9])
+            C = np.array([cx, cy, cz], dtype=float)   # base circle center (on the plane)
+            n = np.array([nx, ny, nz], dtype=float)
+
+            # normalize axis
+            nlen = np.linalg.norm(n)
+            if nlen < 1e-12:
+                continue
+            n /= nlen
+
+            # build an orthonormal basis in the base plane (xdir, ydir) ⟂ n
+            ref = np.array([0.0, 0.0, 1.0]) if abs(n[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
+            xdir = np.cross(n, ref)
+            if np.linalg.norm(xdir) < 1e-12:
+                ref = np.array([0.0, 1.0, 0.0])
+                xdir = np.cross(n, ref)
+            xdir /= np.linalg.norm(xdir)
+            ydir = np.cross(n, xdir)
+
+            # four generators at 0°, 90°, 180°, 270°
+            for ang in (0.0, 0.5*np.pi, np.pi, 1.5*np.pi):
+                radial = np.cos(ang)*xdir + np.sin(ang)*ydir
+                base_pt = C + r * radial                    # on base circle plane
+                top_pt  = base_pt + h * -n                   # translate by height along axis → length == |h|
+
+                ax.plot([base_pt[0], top_pt[0]],
+                        [base_pt[1], top_pt[1]],
+                        [base_pt[2], top_pt[2]],
+                        color='black', alpha=1, linewidth=0.5)
+
+                # bounds
+                x_min = min(x_min, base_pt[0], top_pt[0]); x_max = max(x_max, base_pt[0], top_pt[0])
+                y_min = min(y_min, base_pt[1], top_pt[1]); y_max = max(y_max, base_pt[1], top_pt[1])
+                z_min = min(z_min, base_pt[2], top_pt[2]); z_max = max(z_max, base_pt[2], top_pt[2])
+            continue
+            
         if stroke[-1] == 4:
-            # Arc
-            x_values, y_values, z_values = plot_arc(stroke)
+            # Arc encoded as: [sx,sy,sz, ex,ey,ez, cx,cy,cz, 4]
+            sx, sy, sz, ex, ey, ez, cx, cy, cz = (float(v) for v in stroke[:9])
+            S = np.array([sx, sy, sz])
+            E = np.array([ex, ey, ez])
+            C = np.array([cx, cy, cz])
+
+            vS = S - C; vE = E - C
+            rS = np.linalg.norm(vS); rE = np.linalg.norm(vE)
+            r  = 0.5 * (rS + rE)
+            if r < 1e-12:
+                continue
+
+            vS /= rS; vE /= rE  # unit
+            # normal from start to end (right-hand)
+            n = np.cross(vS, vE)
+            nlen = np.linalg.norm(n)
+            if nlen < 1e-12:
+                # degenerate (collinear) — just draw a line
+                ax.plot([sx, ex], [sy, ey], [sz, ez], color='blue', alpha=1, linewidth=0.5)
+                continue
+            n /= nlen
+
+            # In-plane basis: xdir along start vector, ydir = n × xdir
+            xdir = vS
+            ydir = np.cross(n, xdir)
+
+            # signed sweep from S to E
+            cosang = np.clip(np.dot(vS, vE), -1.0, 1.0)
+            sweep  = np.arccos(cosang)
+            # orientation sign
+            if np.dot(n, np.cross(vS, vE)) < 0:
+                sweep = -sweep
+
+            # sample (should be ±pi/2 for quarter arcs)
+            theta = np.linspace(0.0, sweep, 100)
+            pts = C + r*(np.cos(theta)[:,None]*xdir + np.sin(theta)[:,None]*ydir)
+            x_values, y_values, z_values = pts[:,0], pts[:,1], pts[:,2]
+
+            # update bounds
+            x_min, x_max = min(x_min, x_values.min()), max(x_max, x_values.max())
+            y_min, y_max = min(y_min, y_values.min()), max(y_max, y_values.max())
+            z_min, z_max = min(z_min, z_values.min()), max(z_max, z_values.max())
+
             ax.plot(x_values, y_values, z_values, color='blue', alpha=1, linewidth=0.5)
             continue
         
