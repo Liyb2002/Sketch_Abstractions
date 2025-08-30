@@ -1,4 +1,5 @@
 from math import pi, atan2, fmod
+import numpy as np
 
 
 def _norm_angle(a):
@@ -18,3 +19,55 @@ def _angle_diff(a2, a1):
     if d <= -pi:
         d += twopi
     return d
+
+
+
+# ---------------------------------------------------------------------------------------- # 
+
+def point_is_close(p1, p2, tol=0.05):
+    """Check if two 3D points are within tolerance."""
+    return np.linalg.norm(np.array(p1) - np.array(p2)) < tol
+
+
+def find_construction_lines(
+    edge_features_list,
+    cylinder_features_list,
+    tmpt_edge_features_list,
+    tmpt_cylinder_features_list
+):
+    new_edge_features = []
+    new_cylinder_features = []
+
+    # --- Edge features ---
+    for tmpt_edge_feature in tmpt_edge_features_list:
+        found = False
+        for edge_feature in edge_features_list:
+            # forward match
+            if (
+                point_is_close(tmpt_edge_feature[:3], edge_feature[:3])
+                and point_is_close(tmpt_edge_feature[3:6], edge_feature[3:6])
+            ):
+                found = True
+                break
+            # reverse match
+            if (
+                point_is_close(tmpt_edge_feature[:3], edge_feature[3:6])
+                and point_is_close(tmpt_edge_feature[3:6], edge_feature[:3])
+            ):
+                found = True
+                break
+        if not found:
+            new_edge_features.append(tmpt_edge_feature)
+
+    # --- Cylinder features ---
+    for tmpt_cyl_feature in tmpt_cylinder_features_list:
+        found = False
+        for cyl_feature in cylinder_features_list:
+            if all(point_is_close(tmpt_cyl_feature[i:i+3], cyl_feature[i:i+3]) for i in range(0, len(tmpt_cyl_feature), 3)):
+                found = True
+                break
+        if not found:
+            new_cylinder_features.append(tmpt_cyl_feature)
+
+    return new_edge_features, new_cylinder_features
+
