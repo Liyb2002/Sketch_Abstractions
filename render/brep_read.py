@@ -13,12 +13,23 @@ from OCC.Core.GeomAbs import GeomAbs_SurfaceType
 from OCC.Core.gp import gp_Vec
 from OCC.Core.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Circle
 from OCC.Core.Geom import Geom_Circle, Geom_Line
+
+from OCC.Core.BRep import BRep_Tool
 from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
+from OCC.Core.GeomAbs import GeomAbs_BSplineCurve
+from OCC.Core.Geom import Geom_BSplineCurve
+
 
 from typing import List, Dict, Tuple, Any
 
 import os
 from pathlib import Path
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+from scipy.optimize import least_squares
+from scipy.interpolate import splprep, splev, CubicSpline
 
 def read_step_file(filename):
     step_reader = STEPControl_Reader()
@@ -62,11 +73,12 @@ def sample_strokes_from_step_file(step_path):
         
         face_explorer.Next()
 
-    print("edge_features_list", edge_features_list)
     return edge_features_list, cylinder_features
 
 
 
+
+# ---------------------------------------------------------------- #
 
 # What this code does:
 # 1)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
@@ -164,39 +176,35 @@ def create_face_node_gnn(face):
 # 2)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
 # 3)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
 # 4)Arc: Point_1 (3 value), Point_2 (3 value), Center (3 value), 4
-def create_edge_node(edge):
+# 4)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
 
-    # Get the underlying geometry of the edge
-    edge_curve_handle, first, last = BRep_Tool.Curve(edge)
-    adaptor = GeomAdaptor_Curve(edge_curve_handle)
+def create_edge_node(edge):
+    # Underlying curve + edge's trimmed parameter range
+    h_curve, first, last = BRep_Tool.Curve(edge)
+    adaptor = GeomAdaptor_Curve(h_curve)
     curve_type = adaptor.GetType()
 
+    def p2t(p):
+        return (float(p.X()), float(p.Y()), float(p.Z()))
 
-    if curve_type == GeomAbs_Circle and abs(last - first) < 6.27:
-        start_point = adaptor.Value(first)
-        end_point = adaptor.Value(last)
-        radius = adaptor.Circle().Radius()
-        center = adaptor.Circle().Location()
+    if curve_type == GeomAbs_BSplineCurve:
+        # Downcast directly
+        bs = Geom_BSplineCurve.DownCast(h_curve)
+        if bs is None:
+            raise RuntimeError("Curve claimed to be BSpline, but DownCast failed")
 
-        return [start_point.X(), start_point.Y(), start_point.Z(), end_point.X(), end_point.Y(), end_point.Z(), center.X(),center.Y(), center.Z() , 4]
- 
+        # Always 3 control points in your setup
+        cp1 = p2t(bs.Pole(1))
+        cp2 = p2t(bs.Pole(2))
+        cp3 = p2t(bs.Pole(3))
+        return [*cp1, *cp2, *cp3, 5]  # 9 coords + type
 
-
-
-    properties = GProp_GProps()
-    brepgprop.LinearProperties(edge, properties)
-    length = properties.Mass()
-
-    vertices = []
-    vertex_explorer = TopExp_Explorer(edge, TopAbs_VERTEX)
-    while vertex_explorer.More():
-
-        vertex = topods.Vertex(vertex_explorer.Current())
-        vertex_coords = BRep_Tool.Pnt(vertex)
-        vertices.append([vertex_coords.X(), vertex_coords.Y(), vertex_coords.Z()])
-        vertex_explorer.Next()
-        
-    return [vertices[0][0], vertices[0][1], vertices[0][2], vertices[1][0], vertices[1][1], vertices[1][2], 0, 0, 0, 1]
+    # Straight line (everything else)
+    p_start = adaptor.Value(first)
+    p_end   = adaptor.Value(last)
+    start = p2t(p_start)
+    end   = p2t(p_end)
+    return [*start, *end, 0.0, 0.0, 0.0, 1]  # 10 values total
 
 
 
@@ -209,3 +217,120 @@ def check_duplicate(new_feature, feature_list):
 
 # ------------------------------------------------------# 
 
+
+def vis_stroke_node_features(stroke_node_features):
+    # Initialize the 3D plot
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.grid(False)
+    ax.axis('off')  # Turn off axis background and borders
+
+    # Initialize min and max limits
+    x_min, x_max = float('inf'), float('-inf')
+    y_min, y_max = float('inf'), float('-inf')
+    z_min, z_max = float('inf'), float('-inf')
+
+    perturb_factor = 0.000002  # Adjusted perturbation factor for hand-drawn effect
+
+    # Plot all strokes in blue with perturbations
+    for idx, stroke in enumerate(stroke_node_features):
+        start, end = stroke[:3], stroke[3:6]
+        
+
+        # Update min and max limits based on strokes (ignoring circles)
+        if stroke[-1] == 1:
+            continue
+            # Straight line: [start(x,y,z), end(x,y,z), 0,0,0, 1]
+            start = np.array(stroke[0:3], dtype=float)
+            end   = np.array(stroke[3:6], dtype=float)
+
+            x_values = [start[0], end[0]]
+            y_values = [start[1], end[1]]
+            z_values = [start[2], end[2]]
+
+            # Update bounds
+            x_min, x_max = min(x_min, *x_values), max(x_max, *x_values)
+            y_min, y_max = min(y_min, *y_values), max(y_max, *y_values)
+            z_min, z_max = min(z_min, *z_values), max(z_max, *z_values)
+
+            ax.plot(x_values, y_values, z_values, color='black', alpha=1, linewidth=0.5)
+            continue
+
+        if stroke[-1] == 2:
+            # Circle face
+            x_values, y_values, z_values = plot_circle(stroke)
+            ax.plot(x_values, y_values, z_values, color='red', alpha=1, linewidth=0.5)
+            continue
+
+        if stroke[-1] == 4:
+            # Arc
+            x_values, y_values, z_values = plot_arc(stroke)
+            ax.plot(x_values, y_values, z_values, color='blue', alpha=1, linewidth=0.5)
+            continue
+        
+
+        if stroke[-1] == 5:
+            # Spline encoded as 3 control points + type 5
+            p0 = np.array(stroke[0:3], dtype=float)
+            p1 = np.array(stroke[3:6], dtype=float)
+            p2 = np.array(stroke[6:9], dtype=float)
+
+            # Quadratic Bézier sampling: B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
+            t = np.linspace(0.0, 1.0, 100)
+            one_minus_t = 1.0 - t
+            bez_x = (one_minus_t**2) * p0[0] + 2 * one_minus_t * t * p1[0] + (t**2) * p2[0]
+            bez_y = (one_minus_t**2) * p0[1] + 2 * one_minus_t * t * p1[1] + (t**2) * p2[1]
+            bez_z = (one_minus_t**2) * p0[2] + 2 * one_minus_t * t * p1[2] + (t**2) * p2[2]
+
+            # Optional slight perturbation for hand-draw effect (kept tiny)
+            perturbations = np.random.normal(0, perturb_factor, (100, 3))
+            bez_x = bez_x + perturbations[:, 0]
+            bez_y = bez_y + perturbations[:, 1]
+            bez_z = bez_z + perturbations[:, 2]
+
+            # Update bounds
+            x_min, x_max = min(x_min, bez_x.min()), max(x_max, bez_x.max())
+            y_min, y_max = min(y_min, bez_y.min()), max(y_max, bez_y.max())
+            z_min, z_max = min(z_min, bez_z.min()), max(z_max, bez_z.max())
+
+            # Plot the spline
+            ax.plot(bez_x, bez_y, bez_z, color='black', alpha=1, linewidth=0.5)
+            continue
+
+
+
+    # Compute the center and rescale
+    x_center = (x_min + x_max) / 2
+    y_center = (y_min + y_max) / 2
+    z_center = (z_min + z_max) / 2
+    max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+    ax.set_xlim([x_center - max_diff / 2, x_center + max_diff / 2])
+    ax.set_ylim([y_center - max_diff / 2, y_center + max_diff / 2])
+    ax.set_zlim([z_center - max_diff / 2, z_center + max_diff / 2])
+
+
+
+    # Remove axis ticks and labels
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+
+    # Show plot
+    plt.show()
+
+
+
+def plot_arc(stroke):
+    import numpy as np
+
+    # Extract start and end points from the stroke
+    start_point = np.array(stroke[:3])
+    end_point = np.array(stroke[3:6])
+
+    # Generate a straight line with 100 points between start_point and end_point
+    t = np.linspace(0, 1, 100)  # Parameter for interpolation
+    line_points = (1 - t)[:, None] * start_point + t[:, None] * end_point
+
+    # Return x, y, z coordinates of the line points
+    return line_points[:, 0], line_points[:, 1], line_points[:, 2]
