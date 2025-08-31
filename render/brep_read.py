@@ -26,6 +26,16 @@ from OCC.Core.GeomAbs import (
     GeomAbs_BSplineCurve,
 )
 
+
+from math import pi
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopAbs import TopAbs_EDGE
+from OCC.Core.TopoDS import topods
+from OCC.Core.BRep import BRep_Tool
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
+from OCC.Core.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Circle, GeomAbs_Sphere
+from OCC.Core.gp import gp_Vec
+
 from OCC.Core.gp import gp_Vec, gp_Ax2
 
 
@@ -74,6 +84,9 @@ def sample_strokes_from_step_file(step_path):
         while edge_explorer.More():
             edge = topods.Edge(edge_explorer.Current())
             edge_features = create_edge_node(edge)
+            if edge_features is None:
+                edge_explorer.Next()
+                continue
 
             edge_duplicate_id = check_duplicate(edge_features, edge_features_list)
             if edge_duplicate_id != -1:
@@ -93,92 +106,120 @@ def sample_strokes_from_step_file(step_path):
 
 # ---------------------------------------------------------------- #
 
+
+def _safe_curve_and_range(edge):
+    # Degenerated edges have no 3D curve
+    try:
+        if BRep_Tool.Degenerated(edge):
+            return None, None, None
+    except Exception:
+        pass
+
+    res = BRep_Tool.Curve(edge)
+    if isinstance(res, tuple) and len(res) == 3:
+        return res
+    h_curve = res
+    if h_curve is None:
+        return None, None, None
+    adap = BRepAdaptor_Curve(edge)
+    return h_curve, adap.FirstParameter(), adap.LastParameter()
+
+
+
 # What this code does:
 # 1)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
 # 2)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
+# 3) Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 def create_face_node_gnn(face):
-    
-    adaptor_surface = BRepAdaptor_Surface(face)
-    circle_features = []
+    feats = []
+    surf = BRepAdaptor_Surface(face)
+    stype = surf.GetType()
 
+    # --- Sphere (full) -> [center(3), axis_dir(3), 0, radius, 0, 6]
+    if stype == GeomAbs_Sphere:
+        sph = surf.Sphere()               # gp_Sphere
+        center = sph.Location()
+        radius = sph.Radius()
+        ax3 = sph.Position()              # gp_Ax3
+        axis_dir = ax3.Direction()        # gp_Dir (north-pole)
 
-    # cylinder surface
-    if adaptor_surface.GetType() == GeomAbs_Cylinder:
-        
-        # we also need to compute the angle to see if this is cylinder or an arc
-        edge_explorer = TopExp_Explorer(face, TopAbs_EDGE)
+        # Use surface parameter bounds to decide if it’s a full sphere
+        u_min, u_max = surf.FirstUParameter(), surf.LastUParameter()
+        v_min, v_max = surf.FirstVParameter(), surf.LastVParameter()
+        u_span = abs(u_max - u_min)
+        v_span = abs(v_max - v_min)
+
+        feats.append([
+            center.X(), center.Y(), center.Z(),
+            axis_dir.X(), axis_dir.Y(), axis_dir.Z(),
+            0.0, float(radius), 0.0, 6
+        ])
+        # else: spherical patch — skip or define a richer encoding
+        return feats
+
+    # --- Cylinder (your existing logic, keep but use safe curve/range) ---
+    if stype == GeomAbs_Cylinder:
+        # decide if full cylinder by summing circular edge spans
         total_angle = 0.0
-        while edge_explorer.More():
-            edge = edge_explorer.Current()
-            edge_curve_handle, first, last = BRep_Tool.Curve(edge)
-            
-            curve_adaptor = GeomAdaptor_Curve(edge_curve_handle)
-            curve_type = curve_adaptor.GetType()
+        it = TopExp_Explorer(face, TopAbs_EDGE)
+        while it.More():
+            e = topods.Edge(it.Current())
+            h_curve, first, last = _safe_curve_and_range(e)
+            if h_curve is not None:
+                cadap = BRepAdaptor_Curve(e)
+                if cadap.GetType() == GeomAbs_Circle and first is not None and last is not None:
+                    total_angle += abs(last - first)
+            it.Next()
 
-            if curve_type == GeomAbs_Circle:
-                angle_radians = abs(last - first)
-                total_angle += angle_radians
-            
-            edge_explorer.Next()
-        if total_angle < 6.27:
-            return []
+        if total_angle < 2*pi - 1e-3:
+            return feats  # looks like an open/partial cylinder → skip
 
-        cylinder = adaptor_surface.Cylinder()
-        radius = cylinder.Radius()
+        cyl = surf.Cylinder()
+        radius = cyl.Radius()
+        axis = cyl.Axis()
+        axis_dir = axis.Direction()
+        axis_loc = axis.Location()
 
-        axis = cylinder.Axis()
-        axis_direction = axis.Direction()
-        axis_location = axis.Location()
-        axis_direction = [axis_direction.X(), axis_direction.Y(), axis_direction.Z()]
-        axis_location = [axis_location.X(), axis_location.Y(), axis_location.Z()]
+        # Use surface parameters to measure height
+        u_min, u_max = surf.FirstUParameter(), surf.LastUParameter()
+        v_min, v_max = surf.FirstVParameter(), surf.LastVParameter()
+        S = BRep_Tool.Surface(face)
+        p0 = S.Value(u_min, v_min)
+        p1 = S.Value(u_min, v_max)
+        height = gp_Vec(p0, p1).Magnitude()
 
-        u_min = adaptor_surface.FirstUParameter()
-        u_max = adaptor_surface.LastUParameter()
-        v_min = adaptor_surface.FirstVParameter()
-        v_max = adaptor_surface.LastVParameter()
+        feats.append([
+            axis_loc.X(), axis_loc.Y(), axis_loc.Z(),
+            axis_dir.X(), axis_dir.Y(), axis_dir.Z(),
+            float(height), float(radius), 0.0, 3
+        ])
+        return feats
 
-        surface = BRep_Tool.Surface(face)
-        point_start = surface.Value(u_min, v_min)
-        point_end = surface.Value(u_min, v_max)
+    # --- Plane with full circle (your existing code) ---
+    if stype == GeomAbs_Plane:
+        it = TopExp_Explorer(face, TopAbs_EDGE)
+        while it.More():
+            e = topods.Edge(it.Current())
+            h_curve, first, last = _safe_curve_and_range(e)
+            if h_curve is None:
+                it.Next(); continue
 
-        height_vector = gp_Vec(point_start, point_end)
-        height = height_vector.Magnitude()
-        cylinder_data = axis_location + axis_direction + [height, radius] + [0, 3]
-        circle_features.append(cylinder_data)
+            cadap = BRepAdaptor_Curve(e)
+            if cadap.GetType() == GeomAbs_Circle and first is not None and last is not None:
+                if abs(abs(last - first) - 2*pi) < 0.1:
+                    gcirc = cadap.Circle()
+                    center = gcirc.Location()
+                    normal = gcirc.Axis().Direction()
+                    r = gcirc.Radius()
+                    feats.append([
+                        center.X(), center.Y(), center.Z(),
+                        normal.X(), normal.Y(), normal.Z(),
+                        0.0, float(r), 0.0, 2
+                    ])
+            it.Next()
+        return feats
 
-
-    if adaptor_surface.GetType() == GeomAbs_Plane:
-
-        edge_explorer = TopExp_Explorer(face, TopAbs_EDGE)
-        while edge_explorer.More():
-            edge = topods.Edge(edge_explorer.Current())
-            curve_handle, first, last = BRep_Tool.Curve(edge)
-            adaptor_curve = GeomAdaptor_Curve(curve_handle, first, last)
-            curve_type = adaptor_curve.GetType()
-
-            # Check if the curve is a circle
-            if curve_type == GeomAbs_Circle:
-                geom_circle = adaptor_curve.Circle()
-                angle_radians = abs(last - first)
-                
-                if abs(angle_radians - 6.283) < 0.1:  # Full circle (approximately 2π)
-                    # Extract circle parameters
-                    circle_axis = geom_circle.Axis()
-                    circle_center = geom_circle.Location()
-                    circle_radius = geom_circle.Radius()
-                    circle_normal = circle_axis.Direction()
-                
-
-                    center_coords = [circle_center.X(), circle_center.Y(), circle_center.Z()]
-                    normal_coords = [circle_normal.X(), circle_normal.Y(), circle_normal.Z()]
-                    radius = circle_radius
-
-                    cylinder_data = center_coords + normal_coords + [0, circle_radius] + [0, 2]
-                    circle_features.append(cylinder_data)
-            
-            edge_explorer.Next()
-
-    return circle_features
+    return feats
 
 
 
@@ -189,10 +230,14 @@ def create_face_node_gnn(face):
 # 2)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
 # 3)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
 # 4)Arc: center (3 value), normal (3 value), radius (1 value), angle_start (1 value), sweep (1 value), 4
-# 4)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
+# 5)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
+# 6) Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 
 def create_edge_node(edge):
-    h_curve, u_first, u_last = BRep_Tool.Curve(edge)
+    h_curve, u_first, u_last = _safe_curve_and_range(edge)
+    if h_curve is None:
+        return None
+
     adap = BRepAdaptor_Curve(edge)
     ctype = adap.GetType()
 
@@ -391,7 +436,7 @@ def vis_stroke_node_features(stroke_node_features):
             nlen = np.linalg.norm(n)
             if nlen < 1e-12:
                 # degenerate (collinear) — just draw a line
-                ax.plot([sx, ex], [sy, ey], [sz, ez], color='blue', alpha=1, linewidth=0.5)
+                ax.plot([sx, ex], [sy, ey], [sz, ez], color='black', alpha=1, linewidth=0.5)
                 continue
             n /= nlen
 
@@ -416,7 +461,7 @@ def vis_stroke_node_features(stroke_node_features):
             y_min, y_max = min(y_min, y_values.min()), max(y_max, y_values.max())
             z_min, z_max = min(z_min, z_values.min()), max(z_max, z_values.max())
 
-            ax.plot(x_values, y_values, z_values, color='blue', alpha=1, linewidth=0.5)
+            ax.plot(x_values, y_values, z_values, color='black', alpha=1, linewidth=0.5)
             continue
         
 
@@ -448,6 +493,59 @@ def vis_stroke_node_features(stroke_node_features):
             ax.plot(bez_x, bez_y, bez_z, color='black', alpha=1, linewidth=0.5)
             continue
 
+        if stroke[-1] == 6:
+            # Sphere: [cx,cy,cz, nx,ny,nz, 0, r, 0, 6]
+            cx, cy, cz, nx, ny, nz, _, r, _ = (float(v) for v in stroke[:9])
+            C = np.array([cx, cy, cz], dtype=float)
+            n = np.array([nx, ny, nz], dtype=float)
+
+            # Normalize axis
+            nlen = np.linalg.norm(n)
+            if nlen < 1e-12:
+                continue
+            n /= nlen
+
+            # Build an orthonormal basis in the equatorial plane (xdir, ydir) ⟂ n
+            ref = np.array([0.0, 0.0, 1.0]) if abs(n[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
+            xdir = np.cross(n, ref)
+            if np.linalg.norm(xdir) < 1e-12:
+                ref = np.array([0.0, 1.0, 0.0])
+                xdir = np.cross(n, ref)
+            xdir /= np.linalg.norm(xdir)
+            ydir = np.cross(n, xdir)
+
+            # Four plane normals for four great circles
+            normals = [
+                n,                                   # equator
+                xdir,                                # meridian 1
+                ydir,                                # meridian 2
+                (xdir + ydir) / np.linalg.norm(xdir + ydir)  # tilted meridian (45°)
+            ]
+
+            theta = np.linspace(0.0, 2.0*np.pi, 200)
+            c, s = np.cos(theta), np.sin(theta)
+
+            for pn in normals:
+                # Build in-plane basis (u,v) for this circle plane (normal = pn)
+                # Choose a ref not parallel to pn
+                ref2 = np.array([0.0, 0.0, 1.0]) if abs(pn[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
+                u = np.cross(pn, ref2)
+                if np.linalg.norm(u) < 1e-12:
+                    ref2 = np.array([0.0, 1.0, 0.0])
+                    u = np.cross(pn, ref2)
+                u /= np.linalg.norm(u)
+                v = np.cross(pn, u)
+
+                pts = C[None, :] + r * (c[:, None]*u[None, :] + s[:, None]*v[None, :])
+                x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+
+                # update bounds
+                x_min = min(x_min, x.min()); x_max = max(x_max, x.max())
+                y_min = min(y_min, y.min()); y_max = max(y_max, y.max())
+                z_min = min(z_min, z.min()); z_max = max(z_max, z.max())
+
+                ax.plot(x, y, z, color='black', alpha=1, linewidth=0.5)
+            continue
 
 
     # Compute the center and rescale

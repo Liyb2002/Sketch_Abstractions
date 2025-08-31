@@ -16,6 +16,8 @@ class Component:
         :param data: dict of chosen variant
         :param parent: Parent Component
         """
+        self.output_folder = output_path
+
         self.parent = parent
         self.children = []
 
@@ -33,7 +35,6 @@ class Component:
         self.set_mating_params(data.get('mating_reference'))
 
         self.labels = labels
-        self.output_folder = output_path
 
     def param_init(self):
         """
@@ -117,8 +118,7 @@ class Component:
             return
         
         # Build the file path
-        output_dir = Path(__file__).parent / "output"
-        file_path = output_dir / f"mating_{mating_reference}.json"
+        file_path = self.output_folder / f"mating_{mating_reference}.json"
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:

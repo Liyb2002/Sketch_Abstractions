@@ -9,10 +9,15 @@ import helper
 
 current_folder = Path.cwd().parent
 filename = current_folder / "output" / "root.step"
-edge_features_list, cylinder_features_list = brep_read.sample_strokes_from_step_file(str(filename))  # STEP reader expects a str
-feature_lines = edge_features_list + cylinder_features_list
+# edge_features_list, cylinder_features_list = brep_read.sample_strokes_from_step_file(str(filename))  # STEP reader expects a str
+# feature_lines = edge_features_list + cylinder_features_list
 
+mating_files = list((current_folder / "output").glob("mated_*.step"))
 
+if mating_files:
+    for mating_filename in mating_files:
+        mated_edge_features_list, mated_cylinder_features_list = brep_read.sample_strokes_from_step_file(str(mating_filename))
+        brep_read.vis_stroke_node_features(np.array(mated_edge_features_list + mated_cylinder_features_list))
 
 # Now we need to get all the construction lines
 history_dir = current_folder / "output" / "history"
