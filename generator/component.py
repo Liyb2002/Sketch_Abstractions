@@ -438,7 +438,7 @@ class Component:
             tempt_canvas = build123.protocol.merge_canvas(child_tempt_canvas, tempt_canvas, child.boolean)
 
         # Also save tempt canvas
-        if tempt_canvas is not None and len(self.labels) != 1:
+        if tempt_canvas is not None:
 
             file_name = "-".join(str(n) for n in self.labels)
 

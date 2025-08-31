@@ -9,8 +9,8 @@ import helper
 
 current_folder = Path.cwd().parent
 filename = current_folder / "output" / "root.step"
-# edge_features_list, cylinder_features_list = brep_read.sample_strokes_from_step_file(str(filename))  # STEP reader expects a str
-# feature_lines = edge_features_list + cylinder_features_list
+edge_features_list, cylinder_features_list = brep_read.sample_strokes_from_step_file(str(filename))  # STEP reader expects a str
+feature_lines = edge_features_list + cylinder_features_list
 
 mating_files = list((current_folder / "output").glob("mated_*.step"))
 
@@ -45,4 +45,9 @@ for file in files:
     cylinder_features_list += new_cylinder_features
 
 
-brep_read.vis_stroke_node_features(np.array(edge_features_list + cylinder_features_list))
+construction_lines = construction_edge_features + construction_cylinder_features
+
+
+helper.save_strokes(current_folder, feature_lines, construction_lines)
+
+# brep_read.vis_stroke_node_features(np.array(edge_features_list + cylinder_features_list))

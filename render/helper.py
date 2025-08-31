@@ -1,5 +1,7 @@
 from math import pi, atan2, fmod
 import numpy as np
+from pathlib import Path
+import pickle
 
 
 def _norm_angle(a):
@@ -71,3 +73,21 @@ def find_construction_lines(
 
     return new_edge_features, new_cylinder_features
 
+
+
+# ---------------------------------------------------------------------------------------- # 
+
+def save_strokes(current_folder, feature_lines, construction_lines):
+    out_dir = Path(current_folder) / "output" / "strokes"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "feature_lines": feature_lines,
+        "construction_lines": construction_lines,
+    }
+
+    path = out_dir / "all_strokes.pkl"
+    with path.open("wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    return str(path)
