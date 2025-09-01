@@ -233,9 +233,10 @@ class Component:
                     [x + half_x, y + half_y, z],
                     [x - half_x, y + half_y, z]
                 ]
-                sketch = build123.protocol.build_sketch(
+                sketch, standalone_sketch = build123.protocol.build_sketch(
                     tempt_canvas, new_point_list
                 )
+                self.save_single_sketch(standalone_sketch)
 
             elif op_name == "sketch_circle":
                 radius = x_len / 2
@@ -260,9 +261,10 @@ class Component:
                 normal = [sign * n for n in base_normal]
 
 
-                sketch = build123.protocol.build_circle(
+                sketch, standalone_sketch = build123.protocol.build_circle(
                     radius, center, normal
                 )
+                self.save_single_sketch(standalone_sketch)
 
             elif op_name == "sketch_triangle":
                 # Isosceles triangle centered at (x, y).
@@ -273,9 +275,11 @@ class Component:
                     [x + half_x, y - half_y, z],  # right base
                     [x,          y + half_y, z],  # apex
                 ]
-                sketch = build123.protocol.build_sketch(
+                sketch, standalone_sketch = build123.protocol.build_sketch(
                     tempt_canvas, new_point_list
                 )
+
+                self.save_single_sketch(standalone_sketch)
 
             elif op_name == "extrude":
                 if sketch is None:
@@ -371,6 +375,18 @@ class Component:
 
             helper.func_export_stl(to_save_canvas, str(tmp_stl))
             helper.func_export_step(to_save_canvas, str(tmp_step))
+
+    def save_single_sketch(self, standalone_sketch):
+        output_dir = self.output_folder / "history"
+        output_dir.mkdir(exist_ok=True)
+
+        tmp_stl = output_dir / f"{self.process_count}.stl"
+        tmp_step = output_dir / f"{self.process_count}.step"
+        if standalone_sketch is not None :
+            self.process_count += 1
+
+            helper.func_export_stl(standalone_sketch, str(tmp_stl))
+            helper.func_export_step(standalone_sketch, str(tmp_step))
 
 
     def parse_eval_list(self, path_list):

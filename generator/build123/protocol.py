@@ -6,14 +6,32 @@ from build123d import BuildPart, add
 
 
 def build_sketch(canvas, Points_list):
+    # --- NEW: build the sketch on a fresh, empty canvas and keep it ---
+    with BuildSketch() as standalone_ctx:
+        with BuildLine():
+            lines = []
+            for i in range(len(Points_list)):
+                start_point_sublist = Points_list[i]
+                end_point_sublist = Points_list[(i+1) % len(Points_list)]  # wrap around
 
-    # if tempt_idx == 0:
-    #     brep_dir = os.path.join(data_dir, "canvas", f"brep_{count}.step")
-    #     stl_dir = os.path.join(data_dir, "canvas", f"vis_{count}.stl")
-    # else:
-    #     brep_dir = os.path.join(data_dir, "canvas", f"tempt_{tempt_idx}.step")
-    #     stl_dir = os.path.join(data_dir, "canvas", f"tempt_{tempt_idx}.stl")
+                start_point = (
+                    start_point_sublist[0],
+                    start_point_sublist[1],
+                    start_point_sublist[2]
+                )
+                end_point = (
+                    end_point_sublist[0],
+                    end_point_sublist[1],
+                    end_point_sublist[2]
+                )
 
+                line = Line(start_point, end_point)
+                lines.append(line)
+        _ = make_face()  # keep consistent with your original behavior
+    standalone_sketch = standalone_ctx.sketch
+    # --- END NEW ---
+
+    # Your original behavior below (unchanged)
     if canvas is None:
         with BuildSketch():
             with BuildLine():
@@ -37,8 +55,6 @@ def build_sketch(canvas, Points_list):
                     lines.append(line)
             perimeter = make_face()
 
-        return perimeter
-    
     else:
         with canvas: 
             with BuildSketch():
@@ -64,20 +80,22 @@ def build_sketch(canvas, Points_list):
 
                 perimeter = make_face()
 
-    return perimeter
-
-
-
+    return perimeter, standalone_sketch
 
 
 def build_circle(radius, center, normal):
+    # create a sketch on the plane defined by center + normal
+    with BuildSketch(
+        Plane(origin=(center[0], center[1], center[2]),
+              z_dir=(normal[0], normal[1], normal[2]))
+    ) as ctx:
+        Circle(radius=radius)
 
-    with BuildSketch(Plane(origin=(center[0], center[1], center[2]), z_dir=(normal[0], normal[1], normal[2])) )as perimeter:
-        Circle(radius = radius)
+    # face built from the sketch's wire(s)
+    face = ctx.sketch.face()
 
-
-    return perimeter.sketch.face()
-
+    # return both: the face (as before) AND the "standalone" sketch
+    return face, ctx.sketch
 
 
 
