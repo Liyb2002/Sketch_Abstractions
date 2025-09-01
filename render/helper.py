@@ -75,6 +75,44 @@ def find_construction_lines(
 
 
 
+def find_label(parent_lines, child_edge_features_list, child_cylinder_features_list, label):
+    """
+    Assigns `label` to parent_lines that match with any child edge or cylinder features.
+    
+    Args:
+        parent_lines (list): List of parent edge features (each is a sequence of 6 coordinates).
+        child_edge_features_list (list): List of child edge features.
+        child_cylinder_features_list (list): List of child cylinder features.
+        label (int): Label to assign when a match is found.
+    
+    Returns:
+        list: Labels for each parent line (default -1 if not matched).
+    """
+
+    # initialize all labels as -1
+    labels = [-1] * len(parent_lines)
+
+    # loop through all child features
+    for child_edge in child_edge_features_list + child_cylinder_features_list:
+        for i, edge_feature in enumerate(parent_lines):
+            # forward match
+            if (
+                point_is_close(child_edge[:3], edge_feature[:3]) and
+                point_is_close(child_edge[3:6], edge_feature[3:6])
+            ):
+                labels[i] = label
+                continue  # move to next parent line
+
+            # reverse match
+            if (
+                point_is_close(child_edge[:3], edge_feature[3:6]) and
+                point_is_close(child_edge[3:6], edge_feature[:3])
+            ):
+                labels[i] = label
+                continue
+
+    return labels
+
 # ---------------------------------------------------------------------------------------- # 
 
 def save_strokes(current_folder, feature_lines, construction_lines):
