@@ -324,7 +324,6 @@ def vis_stroke_node_features(stroke_node_features):
     y_min, y_max = float('inf'), float('-inf')
     z_min, z_max = float('inf'), float('-inf')
 
-    perturb_factor = 0.000002  # Adjusted perturbation factor for hand-drawn effect
 
     # Plot all strokes in blue with perturbations
     for idx, stroke in enumerate(stroke_node_features):
@@ -478,12 +477,6 @@ def vis_stroke_node_features(stroke_node_features):
             bez_y = (one_minus_t**2) * p0[1] + 2 * one_minus_t * t * p1[1] + (t**2) * p2[1]
             bez_z = (one_minus_t**2) * p0[2] + 2 * one_minus_t * t * p1[2] + (t**2) * p2[2]
 
-            # Optional slight perturbation for hand-draw effect (kept tiny)
-            perturbations = np.random.normal(0, perturb_factor, (100, 3))
-            bez_x = bez_x + perturbations[:, 0]
-            bez_y = bez_y + perturbations[:, 1]
-            bez_z = bez_z + perturbations[:, 2]
-
             # Update bounds
             x_min, x_max = min(x_min, bez_x.min()), max(x_max, bez_x.max())
             y_min, y_max = min(y_min, bez_y.min()), max(y_max, bez_y.max())
@@ -576,7 +569,7 @@ def vis_labels(stroke_node_features, labels):
     """
     # simple palette: -1 gray, others distinct
     palette = {
-        -1: (0.6, 0.6, 0.6),
+        -1: (0, 0, 0),            # black
          0: plt.cm.tab10(0),
          1: plt.cm.tab10(1),
          2: plt.cm.tab10(2),
@@ -595,12 +588,11 @@ def vis_labels(stroke_node_features, labels):
     y_min, y_max = float('inf'), float('-inf')
     z_min, z_max = float('inf'), float('-inf')
 
-    perturb_factor = 0.000002  # Adjusted perturbation factor for hand-drawn effect
-
     # Plot strokes with label-based colors
     for idx, stroke in enumerate(stroke_node_features):
         start, end = stroke[:3], stroke[3:6]
         col = palette.get(labels[idx], (0.2, 0.2, 0.2))  # fallback dark gray
+
 
         # Update min and max limits based on strokes (ignoring circles)
         if stroke[-1] == 1:
@@ -748,12 +740,6 @@ def vis_labels(stroke_node_features, labels):
             bez_x = (one_minus_t**2) * p0[0] + 2 * one_minus_t * t * p1[0] + (t**2) * p2[0]
             bez_y = (one_minus_t**2) * p0[1] + 2 * one_minus_t * t * p1[1] + (t**2) * p2[1]
             bez_z = (one_minus_t**2) * p0[2] + 2 * one_minus_t * t * p1[2] + (t**2) * p2[2]
-
-            # Optional slight perturbation for hand-draw effect (kept tiny)
-            perturbations = np.random.normal(0, perturb_factor, (100, 3))
-            bez_x = bez_x + perturbations[:, 0]
-            bez_y = bez_y + perturbations[:, 1]
-            bez_z = bez_z + perturbations[:, 2]
 
             # Update bounds
             x_min, x_max = min(x_min, bez_x.min()), max(x_max, bez_x.max())
