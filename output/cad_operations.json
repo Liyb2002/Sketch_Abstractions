@@ -1,0 +1,56 @@
+[
+    {
+        "name": "sketch_rectangle"
+    },
+    {
+        "name": "extrude"
+    },
+    {
+        "name": "fillet_or_chamfer",
+        "probability": 0.8,
+        "sub_parameters": {
+            "radius": "[0.1, 0.4]",
+            "edges": [
+                3
+            ]
+        }
+    },
+    {
+        "name": "sketch_rectangle"
+    },
+    {
+        "name": "extrude"
+    },
+    {
+        "name": "fillet_or_chamfer",
+        "probability": 0.8,
+        "sub_parameters": {
+            "radius": "[0.1, 0.2]",
+            "edges": [
+                0,
+                1
+            ]
+        }
+    },
+    {
+        "name": "sketch_triangle"
+    },
+    {
+        "name": "extrude"
+    },
+    {
+        "name": "sketch_circle"
+    },
+    {
+        "name": "extrude"
+    },
+    {
+        "name": "sketch_circle"
+    },
+    {
+        "name": "sweep"
+    },
+    {
+        "name": "mirror"
+    }
+]

@@ -436,8 +436,9 @@ class Component:
         """
 
         if self.parent and self.condition !="None" and self.condition != self.parent.name:
-            return canvas, process_count, None
+            return canvas, process_count, None, []
 
+        self.cad_op_history = self.cad_operations
         self.process_count = process_count
         self.main_canvas = canvas
 
@@ -450,8 +451,9 @@ class Component:
         self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas, self.boolean)
 
         for child in self.children:
-            self.main_canvas, self.process_count, child_tempt_canvas = child.build(self.main_canvas, self.process_count)
+            self.main_canvas, self.process_count, child_tempt_canvas, child_cad_op_history = child.build(self.main_canvas, self.process_count)
             tempt_canvas = build123.protocol.merge_canvas(child_tempt_canvas, tempt_canvas, child.boolean)
+            self.cad_op_history += child_cad_op_history
 
         # Also save tempt canvas
         if tempt_canvas is not None:
@@ -467,5 +469,4 @@ class Component:
             helper.func_export_stl(tempt_canvas, str(tmp_stl))
             helper.func_export_step(tempt_canvas, str(tmp_step))
 
-
-        return self.main_canvas, self.process_count, tempt_canvas
+        return self.main_canvas, self.process_count, tempt_canvas, self.cad_op_history

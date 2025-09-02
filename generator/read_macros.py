@@ -94,15 +94,14 @@ def read_matings(macro_path, output_path):
         
         count += 1
     
-        for name in os.listdir(output_path):
-            if name.lower().endswith(".json"):
-                file_path = os.path.join(output_path, name)
-                if os.path.isfile(file_path):
-                    try:
-                        os.remove(file_path)
-                    except OSError as e:
-                        print(f"Warning: could not remove {file_path}: {e}")
-
+    for name in os.listdir(output_path):
+        if name.startswith("mated") and name.endswith(".json"):
+            file_path = os.path.join(output_path, name)
+            if os.path.isfile(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError as e:
+                    print(f"Warning: could not remove {file_path}: {e}")
 
 
 
@@ -114,14 +113,15 @@ def execute(component_obj, output_path):
     """
     output_path.mkdir(exist_ok=True)
 
-    canvas, _, _ = component_obj.build()  # build full hierarchy
-
+    canvas, _, _, cad_op_history = component_obj.build()  # build full hierarchy
     stl_path = output_path / f"{component_obj.name}.stl"
     step_path = output_path / f"{component_obj.name}.step"
-
+    cad_operations_file = os.path.join(output_path, "cad_operations.json")
 
     helper.func_export_stl(canvas, str(stl_path))
     helper.func_export_step(canvas, str(step_path))
+    with open(cad_operations_file, "w", encoding="utf-8") as f:
+        json.dump(cad_op_history, f, indent=4, ensure_ascii=False)
 
     print(f"✅ Exported full assembly: {stl_path} and {step_path}")
     return None
