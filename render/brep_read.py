@@ -37,6 +37,7 @@ from OCC.Core.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Circle, Ge
 from OCC.Core.gp import gp_Vec
 
 from OCC.Core.gp import gp_Vec, gp_Ax2
+from OCC.Core.gp import gp_Pnt, gp_Vec
 
 
 from typing import List, Dict, Tuple, Any
@@ -62,7 +63,7 @@ def read_step_file(filename):
         shape = step_reader.Shape()  # Retrieves the translated shape
         return shape
     else:
-        # print("filename", filename)
+        print("filename", filename)
         raise Exception("Error reading STEP file.")
 
 
@@ -128,9 +129,18 @@ def _safe_curve_and_range(edge):
 
 # What this code does:
 # 1)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
-# 2)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
+# 2)Cylinder face: lower Center (3 value), upper Center (3 value), 0, radius, 0, 3
 # 3) Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 def create_face_node_gnn(face):
+    """
+    Extract per-face features for a GNN.
+
+    Outputs a list of feature vectors (feats). Encodings:
+      - Sphere (full): [center(3), axis_dir(3), 0.0, radius, 0.0, 6]
+      - Cylinder (full): [lower_center(3), upper_center(3), 0, radius, 0.0, 3]
+      - Plane with full circle: [center(3), normal(3), 0.0, radius, 0.0, 2]
+      - Otherwise: []
+    """
     feats = []
     surf = BRepAdaptor_Surface(face)
     stype = surf.GetType()
@@ -143,23 +153,22 @@ def create_face_node_gnn(face):
         ax3 = sph.Position()              # gp_Ax3
         axis_dir = ax3.Direction()        # gp_Dir (north-pole)
 
-        # Use surface parameter bounds to decide if it’s a full sphere
+        # NOTE: u/v spans are computed but not used to exclude spherical patches (yet)
         u_min, u_max = surf.FirstUParameter(), surf.LastUParameter()
         v_min, v_max = surf.FirstVParameter(), surf.LastVParameter()
-        u_span = abs(u_max - u_min)
-        v_span = abs(v_max - v_min)
+        _u_span = abs(u_max - u_min)
+        _v_span = abs(v_max - v_min)
 
         feats.append([
             center.X(), center.Y(), center.Z(),
             axis_dir.X(), axis_dir.Y(), axis_dir.Z(),
             0.0, float(radius), 0.0, 6
         ])
-        # else: spherical patch — skip or define a richer encoding
         return feats
 
-    # --- Cylinder (your existing logic, keep but use safe curve/range) ---
+    # --- Cylinder (reworked) ---
     if stype == GeomAbs_Cylinder:
-        # decide if full cylinder by summing circular edge spans
+        # Decide if it's a "full" cylinder wall by summing circular edge spans
         total_angle = 0.0
         it = TopExp_Explorer(face, TopAbs_EDGE)
         while it.More():
@@ -171,31 +180,64 @@ def create_face_node_gnn(face):
                     total_angle += abs(last - first)
             it.Next()
 
+        # Looks like an open/partial cylinder → skip
         if total_angle < 2*pi - 1e-3:
-            return feats  # looks like an open/partial cylinder → skip
+            return feats
 
-        cyl = surf.Cylinder()
-        radius = cyl.Radius()
-        axis = cyl.Axis()
-        axis_dir = axis.Direction()
-        axis_loc = axis.Location()
+        cyl = surf.Cylinder()             # gp_Cylinder
+        radius = float(cyl.Radius())
+        axis = cyl.Axis()                 # gp_Ax1
+        axis_loc = axis.Location()        # gp_Pnt
+        axis_dir = axis.Direction()       # gp_Dir (unit)
 
-        # Use surface parameters to measure height
+        # Use surface params; on cylinders, v is linear along axis
         u_min, u_max = surf.FirstUParameter(), surf.LastUParameter()
         v_min, v_max = surf.FirstVParameter(), surf.LastVParameter()
-        S = BRep_Tool.Surface(face)
-        p0 = S.Value(u_min, v_min)
-        p1 = S.Value(u_min, v_max)
-        height = gp_Vec(p0, p1).Magnitude()
 
+        # Evaluate two surface points at extremes of v (any valid u works)
+        S = BRep_Tool.Surface(face)       # Handle(Geom_Surface)
+        u_ref = u_min
+        p_low = S.Value(u_ref, v_min)     # gp_Pnt
+        p_up  = S.Value(u_ref, v_max)     # gp_Pnt
+
+        # Helper: orthogonal projection of a point P to axis (axis_loc + t * axis_dir)
+        def _project_to_axis(P: gp_Pnt):
+            # Vector from axis origin to P
+            dx = P.X() - axis_loc.X()
+            dy = P.Y() - axis_loc.Y()
+            dz = P.Z() - axis_loc.Z()
+
+            # axis_dir is gp_Dir (unit); t = dot(v, dir)
+            t = dx * axis_dir.X() + dy * axis_dir.Y() + dz * axis_dir.Z()
+
+            # Projected center C = axis_loc + t * axis_dir
+            C = gp_Pnt(
+                axis_loc.X() + t * axis_dir.X(),
+                axis_loc.Y() + t * axis_dir.Y(),
+                axis_loc.Z() + t * axis_dir.Z()
+            )
+            return C, t
+
+        c_low, t_low = _project_to_axis(p_low)
+        c_up,  t_up  = _project_to_axis(p_up)
+
+        # Ensure ordering: lower center first (smaller t along axis direction)
+        if t_up < t_low:
+            c_low, c_up = c_up, c_low
+            t_low, t_up = t_up, t_low
+
+        # 2) Cylinder face features (new):
+        #    [lower_center(3), upper_center(3), 0, radius, 0.0, 3]
         feats.append([
-            axis_loc.X(), axis_loc.Y(), axis_loc.Z(),
-            axis_dir.X(), axis_dir.Y(), axis_dir.Z(),
-            float(height), float(radius), 0.0, 3
+            c_low.X(), c_low.Y(), c_low.Z(),
+            c_up.X(),  c_up.Y(),  c_up.Z(),
+            0, 
+            radius,
+            0.0, 3
         ])
         return feats
 
-    # --- Plane with full circle (your existing code) ---
+    # --- Plane with full circle (unchanged logic) ---
     if stype == GeomAbs_Plane:
         it = TopExp_Explorer(face, TopAbs_EDGE)
         while it.More():
@@ -379,18 +421,22 @@ def vis_stroke_node_features(stroke_node_features):
             continue
 
         if stroke[-1] == 3:
-            # Cylinder face: [center(3), normal(3), height, radius, 0, 3]
-            cx, cy, cz, nx, ny, nz, h, r, _ = (float(v) for v in stroke[:9])
-            C = np.array([cx, cy, cz], dtype=float)   # base circle center (on the plane)
-            n = np.array([nx, ny, nz], dtype=float)
+            # Cylinder face: [lower_center(3), upper_center(3), 0.0, radius, 0.0, 3]
+            # total length = 10; last is type code (3)
+            lx, ly, lz, ux, uy, uz, _zero0, r, _zero1 = (float(v) for v in stroke[:9])
 
-            # normalize axis
-            nlen = np.linalg.norm(n)
-            if nlen < 1e-12:
+            L = np.array([lx, ly, lz], dtype=float)  # lower circle center
+            U = np.array([ux, uy, uz], dtype=float)  # upper circle center
+            axis_vec = U - L
+            h = np.linalg.norm(axis_vec)             # cylinder height
+
+            if h < 1e-12 or r <= 0.0:
                 continue
-            n /= nlen
 
-            # build an orthonormal basis in the base plane (xdir, ydir) ⟂ n
+            # unit axis direction (lower -> upper)
+            n = axis_vec / h
+
+            # build orthonormal basis in the rim plane (perpendicular to n)
             ref = np.array([0.0, 0.0, 1.0]) if abs(n[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
             xdir = np.cross(n, ref)
             if np.linalg.norm(xdir) < 1e-12:
@@ -399,21 +445,23 @@ def vis_stroke_node_features(stroke_node_features):
             xdir /= np.linalg.norm(xdir)
             ydir = np.cross(n, xdir)
 
-            # four generators at 0°, 90°, 180°, 270°
+            # four boundary directions at 0°, 90°, 180°, 270°
             for ang in (0.0, 0.5*np.pi, np.pi, 1.5*np.pi):
                 radial = np.cos(ang)*xdir + np.sin(ang)*ydir
-                base_pt = C + r * radial                    # on base circle plane
-                top_pt  = base_pt + h * -n                   # translate by height along axis → length == |h|
 
-                ax.plot([base_pt[0], top_pt[0]],
-                        [base_pt[1], top_pt[1]],
-                        [base_pt[2], top_pt[2]],
+                # corresponding boundary points on lower/upper rims
+                p_low = L + r * radial
+                p_up  = U + r * radial
+
+                ax.plot([p_low[0], p_up[0]],
+                        [p_low[1], p_up[1]],
+                        [p_low[2], p_up[2]],
                         color='black', alpha=1, linewidth=0.5)
 
                 # bounds
-                x_min = min(x_min, base_pt[0], top_pt[0]); x_max = max(x_max, base_pt[0], top_pt[0])
-                y_min = min(y_min, base_pt[1], top_pt[1]); y_max = max(y_max, base_pt[1], top_pt[1])
-                z_min = min(z_min, base_pt[2], top_pt[2]); z_max = max(z_max, base_pt[2], top_pt[2])
+                x_min = min(x_min, p_low[0], p_up[0]); x_max = max(x_max, p_low[0], p_up[0])
+                y_min = min(y_min, p_low[1], p_up[1]); y_max = max(y_max, p_low[1], p_up[1])
+                z_min = min(z_min, p_low[2], p_up[2]); z_max = max(z_max, p_low[2], p_up[2])
             continue
             
         if stroke[-1] == 4:
@@ -643,18 +691,22 @@ def vis_labels(stroke_node_features, labels):
             continue
 
         if stroke[-1] == 3:
-            # Cylinder face: [center(3), normal(3), height, radius, 0, 3]
-            cx, cy, cz, nx, ny, nz, h, r, _ = (float(v) for v in stroke[:9])
-            C = np.array([cx, cy, cz], dtype=float)   # base circle center (on the plane)
-            n = np.array([nx, ny, nz], dtype=float)
+            # Cylinder face: [lower_center(3), upper_center(3), 0.0, radius, 0.0, 3]
+            # total length = 10; last is type code (3)
+            lx, ly, lz, ux, uy, uz, _zero0, r, _zero1 = (float(v) for v in stroke[:9])
 
-            # normalize axis
-            nlen = np.linalg.norm(n)
-            if nlen < 1e-12:
+            L = np.array([lx, ly, lz], dtype=float)  # lower circle center
+            U = np.array([ux, uy, uz], dtype=float)  # upper circle center
+            axis_vec = U - L
+            h = np.linalg.norm(axis_vec)             # cylinder height
+
+            if h < 1e-12 or r <= 0.0:
                 continue
-            n /= nlen
 
-            # build an orthonormal basis in the base plane (xdir, ydir) ⟂ n
+            # unit axis direction (lower -> upper)
+            n = axis_vec / h
+
+            # build orthonormal basis in the rim plane (perpendicular to n)
             ref = np.array([0.0, 0.0, 1.0]) if abs(n[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
             xdir = np.cross(n, ref)
             if np.linalg.norm(xdir) < 1e-12:
@@ -663,21 +715,23 @@ def vis_labels(stroke_node_features, labels):
             xdir /= np.linalg.norm(xdir)
             ydir = np.cross(n, xdir)
 
-            # four generators at 0°, 90°, 180°, 270°
+            # four boundary directions at 0°, 90°, 180°, 270°
             for ang in (0.0, 0.5*np.pi, np.pi, 1.5*np.pi):
                 radial = np.cos(ang)*xdir + np.sin(ang)*ydir
-                base_pt = C + r * radial                    # on base circle plane
-                top_pt  = base_pt + h * -n                   # translate by height along axis → length == |h|
 
-                ax.plot([base_pt[0], top_pt[0]],
-                        [base_pt[1], top_pt[1]],
-                        [base_pt[2], top_pt[2]],
+                # corresponding boundary points on lower/upper rims
+                p_low = L + r * radial
+                p_up  = U + r * radial
+
+                ax.plot([p_low[0], p_up[0]],
+                        [p_low[1], p_up[1]],
+                        [p_low[2], p_up[2]],
                         color=col, alpha=1, linewidth=0.5)
 
                 # bounds
-                x_min = min(x_min, base_pt[0], top_pt[0]); x_max = max(x_max, base_pt[0], top_pt[0])
-                y_min = min(y_min, base_pt[1], top_pt[1]); y_max = max(y_max, base_pt[1], top_pt[1])
-                z_min = min(z_min, base_pt[2], top_pt[2]); z_max = max(z_max, base_pt[2], top_pt[2])
+                x_min = min(x_min, p_low[0], p_up[0]); x_max = max(x_max, p_low[0], p_up[0])
+                y_min = min(y_min, p_low[1], p_up[1]); y_max = max(y_max, p_low[1], p_up[1])
+                z_min = min(z_min, p_low[2], p_up[2]); z_max = max(z_max, p_low[2], p_up[2])
             continue
             
         if stroke[-1] == 4:
@@ -878,26 +932,47 @@ def vis_cad_op(stroke_node_features, cad_correspondance, i):
             continue
 
         if stroke[-1] == 3:
-            # cylinder face: four generators; update bounds on each
-            cx, cy, cz, nx, ny, nz, h, r, _ = (float(v) for v in stroke[:9])
-            C = np.array([cx, cy, cz]); n = np.array([nx, ny, nz]); nlen = np.linalg.norm(n)
-            if nlen < 1e-12: 
+            # Cylinder face: [lower_center(3), upper_center(3), 0.0, radius, 0.0, 3]
+            # total length = 10; last is type code (3)
+            lx, ly, lz, ux, uy, uz, _zero0, r, _zero1 = (float(v) for v in stroke[:9])
+
+            L = np.array([lx, ly, lz], dtype=float)  # lower circle center
+            U = np.array([ux, uy, uz], dtype=float)  # upper circle center
+            axis_vec = U - L
+            h = np.linalg.norm(axis_vec)             # cylinder height
+
+            if h < 1e-12 or r <= 0.0:
                 continue
-            n /= nlen
+
+            # unit axis direction (lower -> upper)
+            n = axis_vec / h
+
+            # build orthonormal basis in the rim plane (perpendicular to n)
             ref = np.array([0.0, 0.0, 1.0]) if abs(n[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
             xdir = np.cross(n, ref)
             if np.linalg.norm(xdir) < 1e-12:
-                ref = np.array([0.0, 1.0, 0.0]); xdir = np.cross(n, ref)
-            xdir /= np.linalg.norm(xdir); ydir = np.cross(n, xdir)
+                ref = np.array([0.0, 1.0, 0.0])
+                xdir = np.cross(n, ref)
+            xdir /= np.linalg.norm(xdir)
+            ydir = np.cross(n, xdir)
 
+            # four boundary directions at 0°, 90°, 180°, 270°
             for ang in (0.0, 0.5*np.pi, np.pi, 1.5*np.pi):
                 radial = np.cos(ang)*xdir + np.sin(ang)*ydir
-                base_pt = C + r*radial
-                top_pt  = base_pt + h * -n
-                xs = np.array([base_pt[0], top_pt[0]])
-                ys = np.array([base_pt[1], top_pt[1]])
-                zs = np.array([base_pt[2], top_pt[2]])
-                add_segment(xs, ys, zs, update_bounds=True, color_is_red=is_red)
+
+                # corresponding boundary points on lower/upper rims
+                p_low = L + r * radial
+                p_up  = U + r * radial
+
+                ax.plot([p_low[0], p_up[0]],
+                        [p_low[1], p_up[1]],
+                        [p_low[2], p_up[2]],
+                        color=col, alpha=1, linewidth=0.5)
+
+                # bounds
+                x_min = min(x_min, p_low[0], p_up[0]); x_max = max(x_max, p_low[0], p_up[0])
+                y_min = min(y_min, p_low[1], p_up[1]); y_max = max(y_max, p_low[1], p_up[1])
+                z_min = min(z_min, p_low[2], p_up[2]); z_max = max(z_max, p_low[2], p_up[2])
             continue
 
         if stroke[-1] == 4:
