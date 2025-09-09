@@ -54,6 +54,7 @@ for filename in files:
 
     #3)Get the construction lines
     projection_line = line_utils.projection_lines(feature_lines)
+    projection_line += line_utils.derive_construction_lines_for_splines_and_spheres(feature_lines)
     bounding_box_line = line_utils.bounding_box_lines(feature_lines)
 
 

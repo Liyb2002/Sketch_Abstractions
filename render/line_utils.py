@@ -1,3 +1,6 @@
+from typing import List, Sequence
+
+
 def projection_lines(feature_lines, tol=1e-4, angle_tol_rel=0.15, min_gap=1e-4):
     """
     Projection lines:
@@ -266,6 +269,157 @@ def projection_lines(feature_lines, tol=1e-4, angle_tol_rel=0.15, min_gap=1e-4):
 
     return new_lines
 
+
+
+def derive_construction_lines_for_splines_and_spheres(feature_lines: List[Sequence[float]]) -> List[List[float]]:
+    """
+    Return ONLY construction lines (encoded as straight lines, type=1) derived from:
+      - Splines (type 5; exactly 3 control points)
+      - Spheres (type 6)
+
+    Input line encodings (last value is the type code):
+      1) Straight Line: [P1x,P1y,P1z,  P2x,P2y,P2z,                 0,       0,      0,  1]     (ignored)
+      2) Circle:        [Cx, Cy, Cz,   Nx, Ny, Nz,                  0,   radius,      0,  2]     (ignored)
+      3) Cylinder face: [Cx, Cy, Cz,   Nx, Ny, Nz,             height,   radius,      0,  3]     (ignored)
+      4) Arc:           [Sx, Sy, Sz,   Ex, Ey, Ez,   Cx, Cy, Cz,                          4]     (ignored)
+      5) Spline:        [P0x,P0y,P0z,  P1x,P1y,P1z,  P2x,P2y,P2z,                          5]
+      6) Sphere:        [Cx, Cy, Cz,   Ax, Ay, Az,                  0,   radius,      0,  6]
+
+    Output encoding for each emitted construction line (straight line, type=1):
+      [P1x, P1y, P1z,  P2x, P2y, P2z,  0, 0, 0,  1]
+
+    What gets emitted (more lines than before, by request):
+
+    SPLINE (type 5) — total 6 lines per spline:
+      • P0–P1 (endpoint tangent at P0)
+      • P1–P2 (endpoint tangent at P2)
+      • M01–M12 at t=0.5 (one-step de Casteljau)
+      • L01(0.25)–L12(0.25) and L01(0.75)–L12(0.75) (extra de Casteljau guides)
+      • Chord P0–P2
+      • Plus a **bisector at P1** (direction = unit(P0−P1)+unit(P2−P1)) with length ~ average control-edge length
+
+    SPHERE (type 6) — total 13 lines per sphere:
+      • A square (side 2R) in the plane ⟂ axis, centered at center (4 edges)
+      • The two diagonals of that square
+      • Two diameters along the square’s orthonormal in-plane axes (u and v) through the center
+      • One diameter along the sphere axis (through the center)
+      • Four radial lines from center to each square corner
+
+    """
+    import math
+
+    out: List[List[float]] = []
+
+    # ---- inline helpers ----
+    def add(a, b): return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
+    def sub(a, b): return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
+    def mul(a, s): return (a[0]*s, a[1]*s, a[2]*s)
+    def dot(a, b): return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+    def cross(a, b): return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    def norm(a): return math.sqrt(dot(a, a))
+    def normalize(a, eps=1e-9):
+        n = norm(a)
+        return (0.0, 0.0, 0.0) if n < eps else (a[0]/n, a[1]/n, a[2]/n)
+    def is_zero(a, eps=1e-9): return norm(a) < eps
+    def straight_line(p, q):
+        return [p[0], p[1], p[2], q[0], q[1], q[2], 0.0, 0.0, 0.0, 1]
+    def lerp(a, b, t): return add(mul(a, 1.0 - t), mul(b, t))
+
+    for feat in feature_lines or []:
+        if not feat:
+            continue
+        t = int(round(float(feat[-1])))
+
+        # ================= SPLINE (quadratic Bézier) =================
+        if t == 5 and len(feat) >= 10:
+            p0 = (feat[0], feat[1], feat[2])
+            p1 = (feat[3], feat[4], feat[5])
+            p2 = (feat[6], feat[7], feat[8])
+
+            # Control polygon (endpoint tangents)
+            out.append(straight_line(p0, p1))
+            out.append(straight_line(p1, p2))
+
+            # De Casteljau guide at t = 0.5 (mid-segment)
+            m01 = mul(add(p0, p1), 0.5)
+            m12 = mul(add(p1, p2), 0.5)
+            out.append(straight_line(m01, m12))
+
+            # Extra de Casteljau guides at t = 0.25 and 0.75
+            for tau in (0.25, 0.75):
+                l01 = lerp(p0, p1, tau)
+                l12 = lerp(p1, p2, tau)
+                out.append(straight_line(l01, l12))
+
+            # Chord P0–P2
+            out.append(straight_line(p0, p2))
+
+            # Bisector at P1 (direction = unit(P0−P1)+unit(P2−P1))
+            v1 = sub(p0, p1)
+            v2 = sub(p2, p1)
+            u1 = normalize(v1)
+            u2 = normalize(v2)
+            bis = add(u1, u2)
+            if not is_zero(bis):
+                bis = normalize(bis)
+                # length ~ average of control-edge lengths
+                L = 0.5 * (norm(v1) + norm(v2))
+                q1 = add(p1, mul(bis, 0.5 * L))
+                q0 = add(p1, mul(bis, -0.5 * L))
+                out.append(straight_line(q0, q1))
+
+        # ================= SPHERE =================
+        elif t == 6 and len(feat) >= 10:
+            c  = (feat[0], feat[1], feat[2])
+            ax = (feat[3], feat[4], feat[5])
+            r  = float(feat[7]) if len(feat) > 7 else 0.0
+            if r <= 0.0:
+                continue
+
+            a = normalize(ax)
+            if is_zero(a):
+                a = (0.0, 0.0, 1.0)
+
+            # Orthonormal basis (u, v) for plane orthogonal to axis a
+            ref = (1.0, 0.0, 0.0) if abs(a[0]) < 0.9 else (0.0, 1.0, 0.0)
+            u = normalize(cross(a, ref))
+            if is_zero(u):
+                ref = (0.0, 0.0, 1.0)
+                u = normalize(cross(a, ref))
+            v = cross(a, u)
+
+            ur = mul(u, r)
+            vr = mul(v, r)
+            ar = mul(a, r)
+
+            # Square corners (center ± u ± v)
+            c1 = add(add(c, ur), vr)
+            c2 = add(sub(c, ur), vr)
+            c3 = sub(sub(c, ur), vr)
+            c4 = sub(add(c, ur), vr)
+
+            # 4 edges of the square
+            out.append(straight_line(c1, c2))
+            out.append(straight_line(c2, c3))
+            out.append(straight_line(c3, c4))
+            out.append(straight_line(c4, c1))
+            # 2 diagonals
+            out.append(straight_line(c1, c3))
+            out.append(straight_line(c2, c4))
+            # 2 diameters in-plane (u and v axes)
+            out.append(straight_line(sub(c, ur), add(c, ur)))
+            out.append(straight_line(sub(c, vr), add(c, vr)))
+            # 1 diameter along sphere axis
+            out.append(straight_line(sub(c, ar), add(c, ar)))
+            # 4 radial lines from center to each corner (useful aiming rays)
+            out.append(straight_line(c, c1))
+            out.append(straight_line(c, c2))
+            out.append(straight_line(c, c3))
+            out.append(straight_line(c, c4))
+
+        # ignore all other primitives
+
+    return out
 
 
 

@@ -135,7 +135,7 @@ def perturb_straight_line(stroke, rng=None):
 
 
 
-def perturb_circle(stroke, start_angle=0.0, rng=None):
+def perturb_circle(stroke, start_angle=0.0, rng=None, samples = 20):
     """
     Perturb/synthesize a hand-drawn-looking CLOSED circle polyline (10 points).
     Input stroke: [cx,cy,cz, nx,ny,nz, 0, radius, 0, 2]  (radius at index 7)
@@ -191,7 +191,7 @@ def perturb_circle(stroke, start_angle=0.0, rng=None):
 
     # --- 9 slightly non-uniform angles (then close with first) ---
     pts = []
-    for i in range(9):  # 0..8
+    for i in range(samples):  # 0..8
         base = start_angle + 2.0 * math.pi * (i / 9.0)
         t = base + rng.uniform(-angle_jitter, angle_jitter)
 
@@ -449,7 +449,7 @@ def perturb_spline(stroke, samples=10, curvature_boost=1.8, max_mid_offset_ratio
 
 
 
-def perturb_sphere(stroke, samples=10):
+def perturb_sphere(stroke, samples=20):
     """
     Stroke format:
       [cx, cy, cz,  nx, ny, nz,  0,  radius,  0,  6]
