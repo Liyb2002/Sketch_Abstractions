@@ -73,7 +73,7 @@ def read_macro(folder_path, output_folder, idx = 0):
 def read_matings(macro_path, output_path):
     # Loop through each subfolder inside macro_path
 
-    count = 1
+    seperable_level_count = 1
     for subfolder in os.listdir(macro_path):
         subfolder_path = os.path.join(macro_path, subfolder)
 
@@ -87,12 +87,12 @@ def read_matings(macro_path, output_path):
             print(f"Executing {subfolder}...")
 
             # Step 1: Read macro
-            macro_name, root_component = read_macro(subfolder_path, output_path, count)
+            macro_name, root_component = read_macro(subfolder_path, output_path, seperable_level_count)
 
             # Step 2: Execute
             execute(root_component, output_path)
         
-        count += 1
+        seperable_level_count += 1
     
     for name in os.listdir(output_path):
         if name.startswith("mated") and name.endswith(".json"):
@@ -113,9 +113,9 @@ def execute(component_obj, output_path):
     """
     output_path.mkdir(exist_ok=True)
 
-    canvas, _, _, cad_op_history = component_obj.build()  # build full hierarchy
-    stl_path = output_path / f"{component_obj.name}.stl"
-    step_path = output_path / f"{component_obj.name}.step"
+    canvas, _, _, cad_op_history = component_obj.build()
+    stl_path = output_path / f"final_{component_obj.labels[0]}.stl"
+    step_path = output_path / f"final_{component_obj.labels[0]}.step"
     cad_operations_file = os.path.join(output_path, "cad_operations.json")
 
     helper.func_export_stl(canvas, str(stl_path))

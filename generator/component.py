@@ -368,8 +368,8 @@ class Component:
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
-        tmp_stl = output_dir / f"{self.process_count}.stl"
-        tmp_step = output_dir / f"{self.process_count}.step"
+        tmp_stl = output_dir / f"{self.labels[0]}_{self.process_count}.stl"
+        tmp_step = output_dir / f"{self.labels[0]}_{self.process_count}.step"
         if to_save_canvas is not None and to_save_canvas.part is not None:
             self.process_count += 1
 
@@ -380,8 +380,8 @@ class Component:
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
-        tmp_stl = output_dir / f"{self.process_count}.stl"
-        tmp_step = output_dir / f"{self.process_count}.step"
+        tmp_stl = output_dir / f"{self.labels[0]}_{self.process_count}.stl"
+        tmp_step = output_dir / f"{self.labels[0]}_{self.process_count}.step"
         if standalone_sketch is not None :
             self.process_count += 1
 
