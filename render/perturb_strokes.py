@@ -41,7 +41,8 @@ def do_perturb(stroke_node_features, perturb_factor=0.002):
 
         elif t == 5:
             # Spline
-            pass
+            result.append(perturb_spline(stroke))
+
         elif t == 6:
             # Sphere
             pass
@@ -400,6 +401,85 @@ def perturb_arc(stroke, arc_fraction=None,
 
 
 
+
+
+
+def perturb_spline(stroke, samples=10, curvature_boost=1.8, max_mid_offset_ratio=0.75):
+    """
+    Make a 3-CP spline (quadratic Bézier) visibly curvier by boosting the middle control.
+
+    Input:
+      stroke = [x0,y0,z0,  x1,y1,z1,  x2,y2,z2,  5]
+
+    Params:
+      samples               : number of points to sample (default 10)
+      curvature_boost       : how much to push the middle control away from chord
+      max_mid_offset_ratio  : clamp for |P1' - midpoint| relative to chord length
+
+    Returns:
+      list of `samples` points [x,y,z] along the boosted quadratic Bézier.
+    """
+    # --- parse controls ---
+    P0 = [float(stroke[0]), float(stroke[1]), float(stroke[2])]
+    P1 = [float(stroke[3]), float(stroke[4]), float(stroke[5])]
+    P2 = [float(stroke[6]), float(stroke[7]), float(stroke[8])]
+
+    # --- tiny vec utils ---
+    def add(a,b): return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]
+    def sub(a,b): return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]
+    def mul(a,s): return [a[0]*s, a[1]*s, a[2]*s]
+    def dot(a,b): return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
+    def cross(a,b):
+        return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+    def length(a): 
+        from math import sqrt
+        return sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2])
+    def norm(a):
+        L = length(a)
+        return [0.0,0.0,1.0] if L < 1e-12 else [a[0]/L, a[1]/L, a[2]/L]
+
+    # --- chord / midpoint ---
+    chord = sub(P2, P0)
+    L = length(chord)
+    if L < 1e-12:
+        # Degenerate: return all the same point
+        return [P0[:] for _ in range(max(2, samples))]
+
+    M = mul(add(P0, P2), 0.5)
+    w = sub(P1, M)  # P1 offset from chord midpoint
+
+    # If P1 is too close to chord, synthesize a perpendicular direction
+    if length(w) < 0.02 * L:
+        u = norm(chord)
+        # pick a ref not parallel to u
+        ref = [1.0, 0.0, 0.0] if abs(u[0]) < 0.9 else [0.0, 1.0, 0.0]
+        n = norm(cross(u, ref))
+        w_dir = norm(cross(n, u))  # perpendicular to chord
+        w = mul(w_dir, 0.25 * L)   # give it some curvature baseline
+
+    # Boost curvature and clamp
+    w = mul(w, curvature_boost)
+    max_off = max_mid_offset_ratio * L
+    if length(w) > max_off:
+        w = mul(norm(w), max_off)
+
+    P1_boost = add(M, w)
+
+    # --- sample quadratic Bézier with boosted middle ---
+    if samples < 2:
+        samples = 2
+
+    pts = []
+    for i in range(samples):
+        t = i / (samples - 1)
+        one_t = 1.0 - t
+        b0 = one_t * one_t
+        b1 = 2.0 * one_t * t
+        b2 = t * t
+        p = add(add(mul(P0, b0), mul(P1_boost, b1)), mul(P2, b2))
+        pts.append(p)
+
+    return pts
 
 
 

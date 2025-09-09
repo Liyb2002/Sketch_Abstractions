@@ -64,6 +64,6 @@ perturbed_construction_lines = perturb_strokes.do_perturb(intermediate_lines + p
 perturb_strokes.vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines)
 
 
-helper.save_strokes(current_folder, feature_lines, construction_lines)
+# helper.save_strokes(current_folder, feature_lines, construction_lines)
 
-# brep_read.vis_stroke_node_features(np.array(edge_features_list + cylinder_features_list))
+brep_read.vis_stroke_node_features(np.array(feature_lines))

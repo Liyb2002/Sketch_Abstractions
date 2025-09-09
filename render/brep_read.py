@@ -273,7 +273,7 @@ def create_face_node_gnn(face):
 # 3)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
 # 4)Arc: center (3 value), normal (3 value), radius (1 value), angle_start (1 value), sweep (1 value), 4
 # 5)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
-# 6) Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
+# 6)Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 
 def create_edge_node(edge):
     h_curve, u_first, u_last = _safe_curve_and_range(edge)
