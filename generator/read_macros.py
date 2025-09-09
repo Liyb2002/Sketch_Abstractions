@@ -133,8 +133,7 @@ if __name__ == "__main__":
     output_folder = base.parent / "output"
 
     # Clean the two subfolders (auto-create + wipe)
-    helper.clean_dir(output_folder / "history")
-    helper.clean_dir(output_folder / "seperable")
+    helper.clean_dir(output_folder)
 
     # Run your pipeline
     macro_name, root_component = read_macro(macro_folder, output_folder)
