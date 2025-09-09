@@ -267,13 +267,23 @@ def projection_lines(feature_lines, tol=1e-4, angle_tol_rel=0.15, min_gap=1e-4):
     return new_lines
 
 
+
+
 def bounding_box_lines(geometry, tol=1e-6, samples_spline=101):
     """
-    Returns the 12 edges of the axis-aligned bounding box.
+    Returns the 12 edges of the axis-aligned bounding box (AABB) for mixed 3D geometry.
     Accepts either:
-      - primitives in 10-value format (type at v[9]), or
       - polylines (possibly nested): [[ [x,y,z], ...], ...]
+      - 10-value primitives with type tag at v[9], using YOUR formats:
+
+        1) Straight Line:  P1(x,y,z), P2(x,y,z), 0,        0,      0,      1
+        2) Circle:         C(x,y,z),  n(nx,ny,nz), 0,      r,      0,      2
+        3) Cylinder face:  C(x,y,z),  n(nx,ny,nz), height, r,      0,      3
+        4) Arc:            S(x,y,z),  E(x,y,z),    C(x,y,z),       4
+        5) Spline (quad):  P0(x,y,z), P1(x,y,z),   P2(x,y,z),      5
+        6) Sphere:         Cx, Cy, Cz, nx, ny, nz, 0,      r,      0,      6
     """
+    import math
 
     TYPE_LINE, TYPE_CIRCLE, TYPE_CYL, TYPE_ARC, TYPE_SPLINE, TYPE_SPHERE = 1,2,3,4,5,6
 
@@ -341,62 +351,39 @@ def bounding_box_lines(geometry, tol=1e-6, samples_spline=101):
         upd((cx - rx, cy - ry, cz - rz))
         upd((cx + rx, cy + ry, cz + rz))
 
-    # --- arc helpers (no imports) ---
-    def norm_angle(a):
-        while a >= 3.141592653589793: a -= 6.283185307179586
-        while a < -3.141592653589793: a += 6.283185307179586
-        return a
-
-    def angle_in_interval(theta, t0, t1):
-        if t1 >= t0:
-            return (theta >= t0 - 1e-12) and (theta <= t1 + 1e-12)
-        else:
-            return (theta >= t0 - 1e-12) or (theta <= t1 + 1e-12)
-
-    def cos_sin(t):
-        t = norm_angle(t)
-        tt = t*t
-        cos_t = 1 - tt/2 + tt*tt/24
-        sin_t = t - t*tt/6 + t*tt*tt/120
-        return cos_t, sin_t
-
+    # arc AABB by checking endpoints + axis-wise stationary points within the sweep
     def clamp_arc_extrema(center, normal, r, theta0, sweep):
         u, v = plane_basis(normal)
         C = center
         theta1 = theta0 + sweep
 
-        A = (u[0], u[1], u[2])
-        B = (v[0], v[1], v[2])
+        # candidate angles: endpoints + where d/dθ of each coord = 0
         cand = [theta0, theta1]
 
-        def atan2_approx(y, x):
-            if abs(x) > abs(y):
-                t = y / (abs(x) + 1e-30)
-                a = t*(1.0 - 0.28*t*t)
-                return a if x > 0 else (a + (0.0 if t>=0 else -3.141592653589793) + (0.0 if t<0 else 3.141592653589793))
-            else:
-                t = x / (abs(y) + 1e-30)
-                a = 1.5707963267948966 - t*(1.0 - 0.28*t*t)
-                return a if y > 0 else -a
+        A = u  # coefficient for cos
+        B = v  # coefficient for sin
 
         def add_stationary(ax):
-            Au, Bv = (A[ax], B[ax])
+            Au, Bv = (A[ax]*r, B[ax]*r)
             if abs(Au) <= tol and abs(Bv) <= tol:
                 return
-            th = norm_angle(atan2_approx(Bv, Au))
-            th2 = norm_angle(th + 3.141592653589793)
-            for cand_th in (th, th2):
-                rel = norm_angle(cand_th - theta0)
-                abs_th = norm_angle(theta0 + rel)
-                if angle_in_interval(abs_th, theta0, theta1):
+            th = math.atan2(Bv, Au)
+            # also opposite angle (π apart)
+            for base in (th, th + math.pi):
+                # normalize to [theta0, theta0+2π) then test inclusion
+                rel = (base - theta0) % (2*math.pi)
+                abs_th = theta0 + rel
+                if sweep >= 0:
+                    inside = (abs_th >= min(theta0, theta1) - 1e-12) and (abs_th <= max(theta0, theta1) + 1e-12)
+                else:
+                    inside = (abs_th <= max(theta0, theta1) + 1e-12) or (abs_th >= min(theta0, theta1) - 1e-12)
+                if inside:
                     cand.append(abs_th)
 
         add_stationary(0); add_stationary(1); add_stationary(2)
 
         def eval_arc(th):
-            c, s = cos_sin(th)
-            offs = add(scl(u, c*r), scl(v, s*r))
-            return add(C, offs)
+            return add(C, add(scl(u, r*math.cos(th)), scl(v, r*math.sin(th))))
 
         for th in cand:
             upd(eval_arc(th))
@@ -409,45 +396,81 @@ def bounding_box_lines(geometry, tol=1e-6, samples_spline=101):
                 s*s*p0[2] + 2*s*t*p1[2] + t*t*p2[2])
 
     # -------- process input --------
-    # If we detect polylines, just update bounds from their points.
     polylines = flatten_polylines(geometry)
     if polylines:
         for pts in polylines:
             for p in pts:
                 upd((float(p[0]), float(p[1]), float(p[2])))
     else:
-        # Assume 10-value primitives
+        # Assume 10-value primitives per your schema
         for v in geometry:
             t = int(v[9])
 
             if t == TYPE_LINE:
+                # P1, P2
                 upd((v[0], v[1], v[2]))
                 upd((v[3], v[4], v[5]))
 
             elif t == TYPE_CIRCLE:
+                # C, n, 0, r, 0
                 C = (v[0], v[1], v[2])
                 n = (v[3], v[4], v[5])
-                r = abs(v[7])                 # radius at index 7
+                r = abs(v[7])  # radius at index 7
                 extend_with_circle(C, n, r)
 
             elif t == TYPE_CYL:
-                Lc = (v[0], v[1], v[2])
-                Uc = (v[3], v[4], v[5])
-                axis = sub(Uc, Lc)
-                n = nrm(axis)
-                r = abs(v[7])                 # radius at index 7
+                # Cylinder face: C, n, height, r, 0
+                C = (v[0], v[1], v[2])
+                n = nrm((v[3], v[4], v[5]))
+                h = float(v[6])
+                r = abs(v[7])
+                # centers of the two circular caps
+                half = 0.5 * h
+                Lc = add(C, scl(n, -half))
+                Uc = add(C, scl(n,  half))
                 extend_with_circle(Lc, n, r)
                 extend_with_circle(Uc, n, r)
 
             elif t == TYPE_ARC:
-                C = (v[0], v[1], v[2])
-                n = (v[3], v[4], v[5])
-                r = abs(v[6])                 # radius at index 6
-                theta0 = v[7]
-                sweep  = v[8]
-                clamp_arc_extrema(C, n, r, theta0, sweep)
+                # Arc: S, E, C
+                S = (v[0], v[1], v[2])
+                E = (v[3], v[4], v[5])
+                C = (v[6], v[7], v[8])
+
+                # update endpoints regardless
+                upd(S); upd(E); upd(C)
+
+                # derive plane & circle params
+                SC = sub(S, C)
+                EC = sub(E, C)
+                rS = math.sqrt(max(nrm2(SC), 0.0))
+                rE = math.sqrt(max(nrm2(EC), 0.0))
+                r = 0.5*(rS + rE)
+                if r <= tol:
+                    continue  # degenerate arc
+
+                n = cross(SC, EC)
+                if nrm2(n) <= tol*tol:
+                    # S, E, C collinear → treat as chord endpoints
+                    continue
+
+                # basis: u along S from C, v = (n × u)
+                u = nrm(SC)
+                w = nrm(n)
+                v_ = nrm(cross(w, u))
+
+                # angle from S to E in this (u,v_) basis (CCW)
+                x = dot(EC, u)
+                y = dot(EC, v_)
+                theta0 = 0.0
+                sweep = math.atan2(y, x)
+                if sweep < 0:
+                    sweep += 2*math.pi  # choose minor-arc CCW S→E
+
+                clamp_arc_extrema(C, w, r, theta0, sweep)
 
             elif t == TYPE_SPLINE:
+                # quadratic Bézier: P0, P1, P2
                 p0 = (v[0], v[1], v[2])
                 p1 = (v[3], v[4], v[5])
                 p2 = (v[6], v[7], v[8])
@@ -457,13 +480,14 @@ def bounding_box_lines(geometry, tol=1e-6, samples_spline=101):
                     upd(bezier2(p0, p1, p2, t_))
 
             elif t == TYPE_SPHERE:
+                # Sphere: center..., radius at index 7
                 C = (v[0], v[1], v[2])
-                r = abs(v[7])                 # <-- SPHERE RADIUS (index 7)
+                r = abs(v[7])
                 upd((C[0]-r, C[1]-r, C[2]-r))
                 upd((C[0]+r, C[1]+r, C[2]+r))
 
             else:
-                # fallback
+                # fallback: try first two triplets if present
                 upd((v[0], v[1], v[2]))
                 upd((v[3], v[4], v[5]))
 

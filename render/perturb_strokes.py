@@ -312,93 +312,56 @@ def perturb_arc(stroke, arc_fraction=None,
                 noise_scale_ratio=0.0001,
                 endpoint_shift_ratio=0.002,
                 rng=None):
-    """
-    Input (arc stroke of 10 values):
-      [cx,cy,cz, nx,ny,nz, radius, angle_start, sweep, 4]
-    Output:
-      list of 10 points [x,y,z] along a perturbed arc, preserving direction.
-    """
-    if rng is None:
-        rng = random
+    # stroke: [Sx,Sy,Sz, Ex,Ey,Ez, Cx,Cy,Cz, 4]
+    sx,sy,sz, ex,ey,ez, cx,cy,cz = (float(v) for v in stroke[:9])
+    S = [sx,sy,sz]; E = [ex,ey,ez]; C = [cx,cy,cz]
 
-    # ---- parse ----
-    cx, cy, cz = float(stroke[0]), float(stroke[1]), float(stroke[2])
-    nx, ny, nz = float(stroke[3]), float(stroke[4]), float(stroke[5])
-    R          = float(stroke[6])
-    a0         = float(stroke[7])   # start angle (radians)
-    sw         = float(stroke[8])   # sweep (radians), sign = direction
-
-    # ---- vec helpers (no numpy) ----
-    def dot(a,b): return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
-    def add(a,b): return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]
     def sub(a,b): return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]
+    def add(a,b): return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]
+    def dot(a,b): return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
+    def cross(a,b): return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
     def mul(a,s): return [a[0]*s, a[1]*s, a[2]*s]
     def norm(a):
-        L2 = dot(a,a)
-        if L2 <= 0.0: return [0.0,0.0,1.0]
-        L = math.sqrt(L2); return [a[0]/L, a[1]/L, a[2]/L]
-    def cross(a,b):
-        return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
-    def gauss3(s): return [rng.gauss(0.0, s), rng.gauss(0.0, s), rng.gauss(0.0, s)]
+        L = math.sqrt(max(0.0, dot(a,a)))
+        return [1.0,0.0,0.0] if L < 1e-12 else [a[0]/L, a[1]/L, a[2]/L]
 
-    center = [cx, cy, cz]
-    n = norm([nx, ny, nz])
+    vS = sub(S, C); vE = sub(E, C)
+    rS = math.sqrt(max(0.0, dot(vS,vS)))
+    rE = math.sqrt(max(0.0, dot(vE,vE)))
+    r  = 0.5*(rS + rE)
+    if r < 1e-12:
+        return [C[:] for _ in range(10)]
 
-    # in-plane orthonormal basis (right-handed: u × v = n)
-    ref = [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 else [0.0, 1.0, 0.0]
-    u = norm(cross(n, ref))
-    if abs(u[0]) + abs(u[1]) + abs(u[2]) < 1e-12:
-        ref = [0.0, 1.0, 0.0]
-        u = norm(cross(n, ref))
-    v = cross(n, u)
+    vS = [vS[0]/rS, vS[1]/rS, vS[2]/rS]
+    vE = [vE[0]/rE, vE[1]/rE, vE[2]/rE]
 
-    # guard: tiny radius or zero sweep → return degenerate straight-ish sample
-    N = 10
-    if R <= 1e-12 or abs(sw) <= 1e-12:
-        # sample a straight segment of near-zero length at center
-        p = center[:]
-        return [p[:] for _ in range(N)]
+    n = cross(vS, vE)
+    nL = math.sqrt(max(0.0, dot(n,n)))
+    if nL < 1e-12:
+        # collinear: sample straight line S→E
+        pts = []
+        for i in range(10):
+            t = i/9.0
+            pts.append([S[0]*(1-t)+E[0]*t, S[1]*(1-t)+E[1]*t, S[2]*(1-t)+E[2]*t])
+        return pts
+    n = [n[0]/nL, n[1]/nL, n[2]/nL]
 
-    # --- randomize strengths (like your interpolation reference) ---
-    if arc_fraction is None:
-        arc_fraction = rng.uniform(0.5, 1.3)  # 1.0 ~ original arc, <1 blends straighter
-    noise_scale   = R * noise_scale_ratio
-    endpoint_shift= R * endpoint_shift_ratio
+    xdir = vS
+    ydir = cross(n, xdir)  # x × y = n
 
-    # --- non-uniform, but monotonic arc parameters in [0,1] ---
-    # jitter interior parameters slightly, keep sorted to preserve direction
-    ts = [0.0] + sorted(max(0.0, min(1.0, i/(N-1) + rng.uniform(-0.06, 0.06)))
-                        for i in range(1, N-1)) + [1.0]
+    # signed sweep from S to E
+    xcomp = dot(vE, xdir)
+    ycomp = dot(vE, ydir)
+    sweep = math.atan2(ycomp, xcomp)  # (-π, π]
 
-    # --- sample ideal arc points (respect sign of sweep) ---
-    arc_pts = []
-    for t in ts:
-        ang = a0 + sw * t
-        x = R * math.cos(ang)
-        y = R * math.sin(ang)
-        arc_pts.append(add(center, add(mul(u, x), mul(v, y))))
-
-    # --- endpoints & chord for scaling ---
-    start = arc_pts[0][:]
-    end   = arc_pts[-1][:]
-    chord_len = math.sqrt(max(1e-18, dot(sub(end, start), sub(end, start))))
-
-    # shift endpoints a bit
-    start = add(start, gauss3(endpoint_shift))
-    end   = add(end,   gauss3(endpoint_shift))
-
-    # --- blend arc with straight line + interior jitter ---
-    blended = []
-    for j, t in enumerate(ts):
-        line_pt = add(mul(start, 1.0 - t), mul(end, t))
-        arc_pt  = arc_pts[j]
-        p = add(mul(line_pt, 1.0 - arc_fraction), mul(arc_pt, arc_fraction))
-        if 0 < j < N-1:
-            # interior jitter
-            p = add(p, gauss3(noise_scale))
-        blended.append(p)
-
-    return blended
+    pts = []
+    for i in range(10):
+        t = i/9.0
+        th = t * sweep
+        c = math.cos(th); s = math.sin(th)
+        p = add(C, add(mul(xdir, r*c), mul(ydir, r*s)))
+        pts.append(p)
+    return pts
 
 
 
