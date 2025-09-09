@@ -31,7 +31,7 @@ def point_is_close(p1, p2, tol=0.05):
     return np.linalg.norm(np.array(p1) - np.array(p2)) < tol
 
 
-def find_construction_lines(
+def find_intermediate_lines(
     edge_features_list,
     cylinder_features_list,
     tmpt_edge_features_list,

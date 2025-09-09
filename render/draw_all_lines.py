@@ -5,7 +5,8 @@ import numpy as np
 import os
 
 import helper
-
+import line_utils
+import perturb_strokes
 
 current_folder = Path.cwd().parent
 filename = current_folder / "output" / "root.step"
@@ -22,33 +23,45 @@ if mating_files:
 
 
 
-# Now we need to get all the construction lines
+# Now we need to get all the intermediate lines
 history_dir = current_folder / "output" / "history"
 files = sorted(
     [f for f in os.listdir(history_dir) if f.endswith(".step")],
     key=lambda x: int(x.split(".")[0])
 )
-construction_edge_features = []
-construction_cylinder_features = []
+intermediate_edge_features = []
+intermediate_cylinder_features = []
 
 for file in files:
     tmpt_edge_features_list, tmpt_cylinder_features_list = brep_read.sample_strokes_from_step_file(
         str(os.path.join(history_dir, file))
     )
 
-    new_edge_features, new_cylinder_features = helper.find_construction_lines(
+    new_edge_features, new_cylinder_features = helper.find_intermediate_lines(
         edge_features_list,
         cylinder_features_list,
         tmpt_edge_features_list,
         tmpt_cylinder_features_list)
 
-    construction_edge_features += new_edge_features
-    construction_cylinder_features += new_cylinder_features
+    intermediate_edge_features += new_edge_features
+    intermediate_cylinder_features += new_cylinder_features
     edge_features_list += new_edge_features
     cylinder_features_list += new_cylinder_features
 
 
-construction_lines = construction_edge_features + construction_cylinder_features
+intermediate_lines = intermediate_edge_features + intermediate_cylinder_features
+
+
+
+projection_line = line_utils.projection_lines(feature_lines)
+bounding_box_line = line_utils.bounding_box_lines(feature_lines)
+
+
+
+perturbed_feature_lines = perturb_strokes.do_perturb(feature_lines)
+perturbed_construction_lines = perturb_strokes.do_perturb(intermediate_lines + projection_line + bounding_box_line)
+
+perturb_strokes.vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines)
 
 
 helper.save_strokes(current_folder, feature_lines, construction_lines)
