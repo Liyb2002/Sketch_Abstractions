@@ -33,7 +33,7 @@ def do_perturb(stroke_node_features, perturb_factor=0.002):
 
         elif t == 3:
             # Cylinder face
-            result.extend(perturb_cylinder_face(stroke))
+            result.append(perturb_cylinder_face(stroke))
 
         elif t == 4:
             # Arc
@@ -45,7 +45,7 @@ def do_perturb(stroke_node_features, perturb_factor=0.002):
 
         elif t == 6:
             # Sphere
-            result.extend(perturb_sphere(stroke))
+            result.append(perturb_sphere(stroke))
 
         else:
             # Unknown type
@@ -536,10 +536,11 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
 
     Parameters
     ----------
-    perturbed_feature_lines : list[list[[x,y,z], ...]] or nested lists
-        Each item is a polyline (list of 3D points) or a list of polylines.
-    perturbed_construction_lines : list[list[[x,y,z], ...]] or nested lists
-        Each item is a polyline (list of 3D points) or a list of polylines.
+    perturbed_feature_lines : polyline | line_group | nested list
+        - polyline: [[x,y,z], [x,y,z], ...]
+        - line_group: [polyline, polyline, ...]
+        You may nest groups arbitrarily; they will be flattened.
+    perturbed_construction_lines : same as above
     color : str
         Line color for all strokes.
     linewidth : float
@@ -554,26 +555,53 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
     """
 
     # ---------- helpers ----------
+    def is_number(v):
+        return isinstance(v, (int, float))
+
     def is_point(p):
-        return isinstance(p, (list, tuple)) and len(p) == 3 and all(isinstance(v, (int, float)) for v in p)
+        return (
+            isinstance(p, (list, tuple))
+            and len(p) == 3
+            and all(is_number(v) for v in p)
+        )
 
     def is_polyline(obj):
-        return isinstance(obj, (list, tuple)) and len(obj) > 0 and is_point(obj[0])
+        # A non-empty sequence of points
+        return (
+            isinstance(obj, (list, tuple))
+            and len(obj) > 0
+            and all(is_point(p) for p in obj)
+        )
 
     def flatten_polylines(obj):
+        """
+        Recursively collect all polylines from:
+        - a single polyline
+        - a line group: list/tuple of polylines or nested groups
+        - arbitrarily nested structures mixing the above
+        """
         out = []
+        if obj is None:
+            return out
         if is_polyline(obj):
             out.append(obj)
         elif isinstance(obj, (list, tuple)):
             for item in obj:
                 out.extend(flatten_polylines(item))
+        else:
+            # ignore scalars/unknowns silently here; validation happens later
+            pass
         return out
 
     feat_lines = flatten_polylines(perturbed_feature_lines)
     cons_lines = flatten_polylines(perturbed_construction_lines)
 
+    # Validate that inputs were structurally OK (i.e., contained at least one polyline)
     if not feat_lines and not cons_lines:
-        raise ValueError("You must provide at least one polyline in feature or construction lines.")
+        raise ValueError(
+            "No valid polylines found. Provide a polyline [[x,y,z], ...] or a line group "
+            "[polyline, polyline, ...] (nesting allowed)."
+        )
 
     # ---------- bounds ----------
     x_min = y_min = z_min = float("inf")
@@ -642,6 +670,3 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
         plt.show()
 
     return fig, ax
-
-
-
