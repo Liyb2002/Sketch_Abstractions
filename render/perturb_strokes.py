@@ -45,7 +45,8 @@ def do_perturb(stroke_node_features, perturb_factor=0.002):
 
         elif t == 6:
             # Sphere
-            pass
+            result.extend(perturb_sphere(stroke))
+
         else:
             # Unknown type
             pass
@@ -483,6 +484,83 @@ def perturb_spline(stroke, samples=10, curvature_boost=1.8, max_mid_offset_ratio
 
 
 
+
+
+def perturb_sphere(stroke, samples=10):
+    """
+    Stroke format:
+      [cx, cy, cz,  nx, ny, nz,  0,  radius,  0,  6]
+
+    Returns:
+      list of 4 polylines, each a list of 10 [x,y,z] points (closed).
+    """
+    # ---- parse ----
+    cx, cy, cz = float(stroke[0]), float(stroke[1]), float(stroke[2])
+    nx, ny, nz = float(stroke[3]), float(stroke[4]), float(stroke[5])
+    R          = float(stroke[7])
+
+    center = [cx, cy, cz]
+
+    # ---- tiny vec utils ----
+    def add(a,b): return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]
+    def sub(a,b): return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]
+    def mul(a,s): return [a[0]*s, a[1]*s, a[2]*s]
+    def dot(a,b): return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
+    def cross(a,b):
+        return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+    def length(a): return math.sqrt(max(0.0, dot(a,a)))
+    def norm(a):
+        L = length(a)
+        return [0.0,0.0,1.0] if L < 1e-12 else [a[0]/L, a[1]/L, a[2]/L]
+
+    # ---- build axis-aligned triad (n, u, v) ----
+    n = norm([nx, ny, nz])  # sphere's "axis"
+    if length(n) < 1e-12:
+        n = [0.0, 0.0, 1.0]  # fallback
+
+    ref = [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 else [0.0, 1.0, 0.0]
+    u = norm(cross(n, ref))
+    if length(u) < 1e-12:
+        ref = [0.0, 1.0, 0.0]
+        u = norm(cross(n, ref))
+    v = cross(n, u)  # right-handed: u × v = n
+
+    # a diagonal meridian plane (normal ∝ u+v)
+    uv_diag = norm(add(u, v))
+
+    # We’ll draw 4 circles whose plane normals are:
+    circle_normals = [n, u, v, uv_diag]
+
+    # ---- circle sampler (closed: 10 points) ----
+    def sample_circle_closed(center, normal, radius, N=10, start_angle=0.0):
+        # build in-plane basis (a, b) with a × b = normal
+        # choose a basis vector not parallel to normal
+        ref_local = [1.0, 0.0, 0.0] if abs(normal[0]) < 0.9 else [0.0, 1.0, 0.0]
+        a = norm(cross(normal, ref_local))
+        if length(a) < 1e-12:
+            ref_local = [0.0, 1.0, 0.0]
+            a = norm(cross(normal, ref_local))
+        b = cross(normal, a)
+
+        pts = []
+        # 9 unique + repeat first = 10 closed points
+        for i in range(9):
+            t = start_angle + 2.0 * math.pi * (i / 9.0)
+            x = radius * math.cos(t)
+            y = radius * math.sin(t)
+            p = add(center, add(mul(a, x), mul(b, y)))
+            pts.append(p)
+        pts.append(pts[0][:])
+        return pts
+
+    # ---- build the 4 polylines ----
+    polylines = []
+    # small phase offsets so seams don’t all align visually
+    offsets = [0.0, math.pi/12, math.pi/8, math.pi/6]
+    for normal, off in zip(circle_normals, offsets):
+        polylines.append(sample_circle_closed(center, normal, R, N=10, start_angle=off))
+
+    return polylines
 
 
 

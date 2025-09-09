@@ -1,0 +1,9 @@
+{
+    "name": "leg_hole_mating",
+    "parameters": {
+        "x_length": 0.740670983818982,
+        "y_length": 3.1935461937161884,
+        "z_length": 0.9904560335325876,
+        "normal": "-z"
+    }
+}

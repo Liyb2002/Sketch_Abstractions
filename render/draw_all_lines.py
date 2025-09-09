@@ -18,8 +18,15 @@ mating_files = list((current_folder / "output").glob("mated_*.step"))
 if mating_files:
     for mating_filename in mating_files:
         mated_edge_features_list, mated_cylinder_features_list = brep_read.sample_strokes_from_step_file(str(mating_filename))
-        # brep_read.vis_stroke_node_features(np.array(mated_edge_features_list + mated_cylinder_features_list))
+        mated_feature_lines = mated_edge_features_list + mated_cylinder_features_list
+        mated_projection_line = line_utils.projection_lines(mated_feature_lines)
+        mated_bounding_box_line = line_utils.bounding_box_lines(mated_feature_lines)
 
+
+        mated_perturbed_feature_lines = perturb_strokes.do_perturb(mated_feature_lines)
+        mated_perturbed_construction_lines = perturb_strokes.do_perturb(mated_projection_line + mated_bounding_box_line)
+
+        perturb_strokes.vis_perturbed_strokes(mated_perturbed_feature_lines, mated_perturbed_construction_lines)
 
 
 

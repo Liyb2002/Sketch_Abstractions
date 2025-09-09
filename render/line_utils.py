@@ -266,24 +266,18 @@ def projection_lines(feature_lines, tol=1e-4, angle_tol_rel=0.15, min_gap=1e-4):
 
     return new_lines
 
-def bounding_box_lines(feature_lines, tol=1e-6, samples_spline=101):
+
+def bounding_box_lines(geometry, tol=1e-6, samples_spline=101):
     """
-    Return the 12 straight-line edges of the EXACT axis-aligned bounding box of the geometry.
-
-    Primitive format (10 values), type code at v[9]:
-      1 Line:      [p1(3), p2(3), 0, 0, 0, 1]
-      2 Circle:    [center(3), normal(3), 0, radius, 0, 2]
-      3 Cylinder:  [lowerC(3), upperC(3), 0, radius, 0, 3]
-      4 Arc:       [center(3), normal(3), radius, angle_start, sweep, 4]
-      5 Spline:    [cp1(3), cp2(3), cp3(3), 5]  # treated as quadratic Bézier for bbox (sampled)
-      6 Sphere:    [center(3), axis(3), 0, radius, 0, 6]
-
-    Returns: list of 12 primitives (each [x1,y1,z1, x2,y2,z2, 0,0,0, 1]).
+    Returns the 12 edges of the axis-aligned bounding box.
+    Accepts either:
+      - primitives in 10-value format (type at v[9]), or
+      - polylines (possibly nested): [[ [x,y,z], ...], ...]
     """
 
     TYPE_LINE, TYPE_CIRCLE, TYPE_CYL, TYPE_ARC, TYPE_SPLINE, TYPE_SPHERE = 1,2,3,4,5,6
 
-    # ---- basic ops (no imports) ----
+    # -------- basic ops --------
     def sub(a,b): return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
     def add(a,b): return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
     def scl(a,s): return (a[0]*s, a[1]*s, a[2]*s)
@@ -296,10 +290,27 @@ def bounding_box_lines(feature_lines, tol=1e-6, samples_spline=101):
         d = d2**0.5
         return (a[0]/d, a[1]/d, a[2]/d)
 
-    # Track extrema
+    # -------- helpers to detect input shape --------
+    def is_point(p):
+        return isinstance(p, (list, tuple)) and len(p) == 3 and all(isinstance(x, (int, float)) for x in p)
+
+    def is_polyline(obj):
+        return isinstance(obj, (list, tuple)) and len(obj) > 0 and is_point(obj[0])
+
+    def flatten_polylines(obj):
+        out = []
+        if is_polyline(obj):
+            out.append(obj)
+        elif isinstance(obj, (list, tuple)):
+            for it in obj:
+                out.extend(flatten_polylines(it))
+        return out
+
+    # -------- track extrema --------
     INF = 10**30
-    xmin, ymin, zmin =  INF,  INF,  INF
-    xmax, ymax, zmax = -INF, -INF, -INF
+    xmin = ymin = zmin =  INF
+    xmax = ymax = zmax = -INF
+
     def upd(p):
         nonlocal xmin, ymin, zmin, xmax, ymax, zmax
         x,y,z = p
@@ -310,10 +321,8 @@ def bounding_box_lines(feature_lines, tol=1e-6, samples_spline=101):
         if y > ymax: ymax = y
         if z > zmax: zmax = z
 
-    # Orthonormal basis in plane with normal n (unit)
     def plane_basis(n):
         n = nrm(n)
-        # pick a helper not parallel to n
         h = (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)
         u = nrm(cross(n, h))
         if nrm2(u) <= tol*tol:
@@ -322,8 +331,7 @@ def bounding_box_lines(feature_lines, tol=1e-6, samples_spline=101):
         v = nrm(cross(n, u))
         return u, v
 
-    # --- exact AABB of a full circle in 3D ---
-    # For axis e=(1,0,0),(0,1,0),(0,0,1), the radius projected onto e is r*sqrt(1 - (n·e)^2)
+    # exact AABB for full 3D circle
     def extend_with_circle(center, normal, r):
         cx, cy, cz = center
         nx, ny, nz = nrm(normal)
@@ -333,186 +341,150 @@ def bounding_box_lines(feature_lines, tol=1e-6, samples_spline=101):
         upd((cx - rx, cy - ry, cz - rz))
         upd((cx + rx, cy + ry, cz + rz))
 
-    # --- exact AABB of an arc (subset of circle) ---
-    # Param: P(θ) = C + r*(u cosθ + v sinθ), θ ∈ [θ0, θ1] with θ1=θ0+sweep
+    # --- arc helpers (no imports) ---
     def norm_angle(a):
-        # map to [-pi, pi) without imports
-        # Using iterative wrapping to avoid math library
         while a >= 3.141592653589793: a -= 6.283185307179586
         while a < -3.141592653589793: a += 6.283185307179586
         return a
 
     def angle_in_interval(theta, t0, t1):
-        # works for both positive/negative sweep; interval is directed
-        # normalize so t0 is start, t1 is end along sweep direction
         if t1 >= t0:
             return (theta >= t0 - 1e-12) and (theta <= t1 + 1e-12)
         else:
-            # wrap across -pi/pi
             return (theta >= t0 - 1e-12) or (theta <= t1 + 1e-12)
 
+    def cos_sin(t):
+        t = norm_angle(t)
+        tt = t*t
+        cos_t = 1 - tt/2 + tt*tt/24
+        sin_t = t - t*tt/6 + t*tt*tt/120
+        return cos_t, sin_t
+
     def clamp_arc_extrema(center, normal, r, theta0, sweep):
-        # Build plane basis
         u, v = plane_basis(normal)
-        # Candidate angles: endpoints plus where x,y,z reach stationary points
-        # For a coordinate axis ex, f(θ) = dot(ex, r*(u cosθ + v sinθ))
-        # df/dθ = 0 => -r*(dot(ex,u) sinθ - dot(ex,v) cosθ)=0 => tanθ = dot(ex,v)/dot(ex,u)
         C = center
         theta1 = theta0 + sweep
 
-        # components of u,v along x,y,z
-        A = (u[0], u[1], u[2])  # dot(ex,u) etc.
-        B = (v[0], v[1], v[2])  # dot(ex,v) etc.
-
+        A = (u[0], u[1], u[2])
+        B = (v[0], v[1], v[2])
         cand = [theta0, theta1]
 
-        def add_stationary(ax):  # ax = 0 for x, 1 for y, 2 for z
+        def atan2_approx(y, x):
+            if abs(x) > abs(y):
+                t = y / (abs(x) + 1e-30)
+                a = t*(1.0 - 0.28*t*t)
+                return a if x > 0 else (a + (0.0 if t>=0 else -3.141592653589793) + (0.0 if t<0 else 3.141592653589793))
+            else:
+                t = x / (abs(y) + 1e-30)
+                a = 1.5707963267948966 - t*(1.0 - 0.28*t*t)
+                return a if y > 0 else -a
+
+        def add_stationary(ax):
             Au, Bv = (A[ax], B[ax])
             if abs(Au) <= tol and abs(Bv) <= tol:
                 return
-            # θ* = atan2(Bv, Au)
-            # We avoid math.atan2; approximate with piecewise to keep zero-import:
-            # Use a simple rational approximation of atan2 for robustness:
-            def atan2_approx(y, x):
-                if abs(x) > abs(y):
-                    t = y / (abs(x) + 1e-30)
-                    # approx atan(t) ~ t*(1 - 0.28*t^2)
-                    a = t*(1.0 - 0.28*t*t)
-                    return a if x > 0 else (a + (0.0 if t>=0 else -3.141592653589793) + (0.0 if t<0 else 3.141592653589793))
-                else:
-                    t = x / (abs(y) + 1e-30)
-                    a = 1.5707963267948966 - t*(1.0 - 0.28*t*t)
-                    return a if y > 0 else -a
-            th = atan2_approx(Bv, Au)
-            th = norm_angle(th)
-            th2 = norm_angle(th + 3.141592653589793)  # +π gives the opposite extremum
+            th = norm_angle(atan2_approx(Bv, Au))
+            th2 = norm_angle(th + 3.141592653589793)
             for cand_th in (th, th2):
-                # shift into reference frame of theta0..theta1
-                # normalize relative to theta0
                 rel = norm_angle(cand_th - theta0)
-                # reconstitute absolute angle nearest to interval
-                # Map back to global angle space around [theta0, theta1]
                 abs_th = norm_angle(theta0 + rel)
                 if angle_in_interval(abs_th, theta0, theta1):
                     cand.append(abs_th)
 
-        add_stationary(0)  # x
-        add_stationary(1)  # y
-        add_stationary(2)  # z
+        add_stationary(0); add_stationary(1); add_stationary(2)
 
-        # Evaluate positions and update bbox
         def eval_arc(th):
             c, s = cos_sin(th)
             offs = add(scl(u, c*r), scl(v, s*r))
             return add(C, offs)
 
-        # Minimal cos/sin without imports (Cordic-ish tiny approx acceptable for bbox):
-        def cos_sin(t):
-            # Reduce to [-pi, pi]
-            t = norm_angle(t)
-            # Use 5th-order minimax-ish polynomial (good enough here):
-            tt = t*t
-            cos_t = 1 - tt/2 + tt*tt/24
-            sin_t = t - t*tt/6 + t*tt*tt/120
-            return cos_t, sin_t
-
         for th in cand:
-            p = eval_arc(th)
-            upd(p)
+            upd(eval_arc(th))
 
-    # --- quadratic Bézier sampling (for your 3-CP spline) ---
+    # quadratic Bézier sampler (for spline bbox)
     def bezier2(p0, p1, p2, t):
         s = 1.0 - t
         return (s*s*p0[0] + 2*s*t*p1[0] + t*t*p2[0],
                 s*s*p0[1] + 2*s*t*p1[1] + t*t*p2[1],
                 s*s*p0[2] + 2*s*t*p1[2] + t*t*p2[2])
 
-    # ---- accumulate exact/tight bbox ----
-    for v in feature_lines:
-        t = int(v[9])
+    # -------- process input --------
+    # If we detect polylines, just update bounds from their points.
+    polylines = flatten_polylines(geometry)
+    if polylines:
+        for pts in polylines:
+            for p in pts:
+                upd((float(p[0]), float(p[1]), float(p[2])))
+    else:
+        # Assume 10-value primitives
+        for v in geometry:
+            t = int(v[9])
 
-        if t == TYPE_LINE:
-            upd((v[0], v[1], v[2]))
-            upd((v[3], v[4], v[5]))
+            if t == TYPE_LINE:
+                upd((v[0], v[1], v[2]))
+                upd((v[3], v[4], v[5]))
 
-        elif t == TYPE_CIRCLE:
-            C = (v[0], v[1], v[2])
-            n = (v[3], v[4], v[5])
-            r = abs(v[7])
-            extend_with_circle(C, n, r)
+            elif t == TYPE_CIRCLE:
+                C = (v[0], v[1], v[2])
+                n = (v[3], v[4], v[5])
+                r = abs(v[7])                 # radius at index 7
+                extend_with_circle(C, n, r)
 
-        elif t == TYPE_CYL:
-            L = (v[0], v[1], v[2])
-            U = (v[3], v[4], v[5])
-            axis = sub(U, L)
-            n = nrm(axis)
-            r = abs(v[7])
-            # two circular caps at L and U in plane normal n
-            extend_with_circle(L, n, r)
-            extend_with_circle(U, n, r)
+            elif t == TYPE_CYL:
+                Lc = (v[0], v[1], v[2])
+                Uc = (v[3], v[4], v[5])
+                axis = sub(Uc, Lc)
+                n = nrm(axis)
+                r = abs(v[7])                 # radius at index 7
+                extend_with_circle(Lc, n, r)
+                extend_with_circle(Uc, n, r)
 
-        elif t == TYPE_ARC:
-            C = (v[0], v[1], v[2])
-            n = (v[3], v[4], v[5])
-            r = abs(v[6])
-            theta0 = v[7]
-            sweep  = v[8]
-            clamp_arc_extrema(C, n, r, theta0, sweep)
+            elif t == TYPE_ARC:
+                C = (v[0], v[1], v[2])
+                n = (v[3], v[4], v[5])
+                r = abs(v[6])                 # radius at index 6
+                theta0 = v[7]
+                sweep  = v[8]
+                clamp_arc_extrema(C, n, r, theta0, sweep)
 
-        elif t == TYPE_SPLINE:
-            p0 = (v[0], v[1], v[2])
-            p1 = (v[3], v[4], v[5])
-            p2 = (v[6], v[7], v[8])
-            # sample densely (exact Bézier extrema solving would need more algebra)
-            N = max(3, int(samples_spline))
-            for i in range(N):
-                t_ = i/(N-1)
-                upd(bezier2(p0, p1, p2, t_))
+            elif t == TYPE_SPLINE:
+                p0 = (v[0], v[1], v[2])
+                p1 = (v[3], v[4], v[5])
+                p2 = (v[6], v[7], v[8])
+                N = max(3, int(samples_spline))
+                for i in range(N):
+                    t_ = i/(N-1)
+                    upd(bezier2(p0, p1, p2, t_))
 
-        elif t == TYPE_SPHERE:
-            C = (v[0], v[1], v[2])
-            r = abs(v[7])
-            upd((C[0]-r, C[1]-r, C[2]-r))
-            upd((C[0]+r, C[1]+r, C[2]+r))
+            elif t == TYPE_SPHERE:
+                C = (v[0], v[1], v[2])
+                r = abs(v[7])                 # <-- SPHERE RADIUS (index 7)
+                upd((C[0]-r, C[1]-r, C[2]-r))
+                upd((C[0]+r, C[1]+r, C[2]+r))
 
-        else:
-            # fallback to first two points if present
-            upd((v[0], v[1], v[2]))
-            upd((v[3], v[4], v[5]))
+            else:
+                # fallback
+                upd((v[0], v[1], v[2]))
+                upd((v[3], v[4], v[5]))
 
-    # Degenerate?
+    # -------- build 12 bbox edges --------
     if not (xmin <= xmax and ymin <= ymax and zmin <= zmax):
         return []
 
-    # Build 8 corners
     X = [xmin, xmax]; Y = [ymin, ymax]; Z = [zmin, zmax]
-    corners = [
-        (X[i], Y[j], Z[k]) for i in (0,1) for j in (0,1) for k in (0,1)
-    ]
+    corners = [(X[i], Y[j], Z[k]) for i in (0,1) for j in (0,1) for k in (0,1)]
     idx = {(i,j,k): (i<<2) | (j<<1) | k for i in (0,1) for j in (0,1) for k in (0,1)}
-    # 12 edges
     edges_idx = [
-        # bottom (z=zmin)
-        (idx[(0,0,0)], idx[(1,0,0)]),
-        (idx[(0,0,0)], idx[(0,1,0)]),
-        (idx[(1,1,0)], idx[(0,1,0)]),
-        (idx[(1,1,0)], idx[(1,0,0)]),
-        # top (z=zmax)
-        (idx[(0,0,1)], idx[(1,0,1)]),
-        (idx[(0,0,1)], idx[(0,1,1)]),
-        (idx[(1,1,1)], idx[(0,1,1)]),
-        (idx[(1,1,1)], idx[(1,0,1)]),
-        # verticals
-        (idx[(0,0,0)], idx[(0,0,1)]),
-        (idx[(1,0,0)], idx[(1,0,1)]),
-        (idx[(0,1,0)], idx[(0,1,1)]),
-        (idx[(1,1,0)], idx[(1,1,1)]),
+        (idx[(0,0,0)], idx[(1,0,0)]), (idx[(0,0,0)], idx[(0,1,0)]),
+        (idx[(1,1,0)], idx[(0,1,0)]), (idx[(1,1,0)], idx[(1,0,0)]),
+        (idx[(0,0,1)], idx[(1,0,1)]), (idx[(0,0,1)], idx[(0,1,1)]),
+        (idx[(1,1,1)], idx[(0,1,1)]), (idx[(1,1,1)], idx[(1,0,1)]),
+        (idx[(0,0,0)], idx[(0,0,1)]), (idx[(1,0,0)], idx[(1,0,1)]),
+        (idx[(0,1,0)], idx[(0,1,1)]), (idx[(1,1,0)], idx[(1,1,1)]),
     ]
-
     def make_line(p1, p2):
         return [p1[0],p1[1],p1[2], p2[0],p2[1],p2[2], 0.0,0.0,0.0, TYPE_LINE]
 
-    # Emit all 12 edges (exact bbox), without filtering out overlaps on purpose
     out = []
     for i,j in edges_idx:
         p1, p2 = corners[i], corners[j]
