@@ -14,7 +14,7 @@ NumberOrArray = Union[float, int, np.ndarray, str]
 # ===========================
 # Tree construction
 # ===========================
-def build_label_tree(label_dir: Path) -> Dict[str, Any]:
+def build_label_trees(label_dir: Path) -> List[Dict[str, Any]]:
     label_dir = Path(label_dir)
     stems = [p.stem for p in label_dir.glob("*.step")]
 
@@ -24,8 +24,6 @@ def build_label_tree(label_dir: Path) -> Dict[str, Any]:
         cur = nested
         for part in parts:
             cur = cur.setdefault(part, {})
-
-    nested.setdefault('0', {})
 
     def _sort_key(k: str):
         try:
@@ -43,7 +41,11 @@ def build_label_tree(label_dir: Path) -> Dict[str, Any]:
             ],
         }
 
-    return to_node('0', nested.get('0', {}))
+    # Build a node for each top-level root (0, 1, 2, ...)
+    return [
+        to_node(root, nested[root])
+        for root in sorted(nested.keys(), key=lambda k: _sort_key(k))
+    ]
 
 
 # ===========================
@@ -191,13 +193,12 @@ if __name__ == "__main__":
     label_dir = current_folder / "output" / "seperable"
 
     # 2) Build the tree
-    tree = build_label_tree(label_dir)
+    trees = build_label_trees(label_dir)
 
-    # 3) Compute values for all nodes
-    #    Each node's value is a tuple:
-    #      (perturbed_feature_lines, perturbed_construction_lines)
-    value_map: Dict[str, NumberOrArray] = {}
-    root_value = compute_tree_values(tree, label_dir, value_map=value_map)
+    for tree in trees:
+        # 3) Compute values for all nodes
+        value_map: Dict[str, NumberOrArray] = {}
+        root_value = compute_tree_values(tree, label_dir, value_map=value_map)
 
-    # 4) Visualize every node
-    visualize_tree_values(tree, value_map)
+        # 4) Visualize every node
+        visualize_tree_values(tree, value_map)
