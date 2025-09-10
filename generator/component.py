@@ -291,6 +291,7 @@ class Component:
                 tempt_canvas = build123.protocol.build_extrude(
                     tempt_canvas, sketch, z_len
                 )
+                self.save_process(tempt_canvas, self.main_canvas)
 
             elif op_name == "fillet_or_chamfer":
                 prob = op.get("probability", 1.0)
@@ -321,6 +322,8 @@ class Component:
                         tempt_canvas = build123.protocol.build_chamfer(
                             tempt_canvas, target_edge, radius
                         )
+                
+                self.save_process(tempt_canvas, self.main_canvas)
 
             elif op_name == "sweep":
                 self.path = self.parse_eval_list(self.path)
@@ -329,11 +332,13 @@ class Component:
                 tempt_canvas = build123.protocol.build_sweep(
                     tempt_canvas, sketch, self.path
                 )
+                self.save_process(tempt_canvas, self.main_canvas)
                            
             elif op_name == "mirror":
                 tempt_canvas = build123.protocol.build_mirror(
                     tempt_canvas
                 )
+                self.save_process(tempt_canvas, self.main_canvas)
 
             elif op_name == "mating_subtraction":
                 # ensure output folder exists
@@ -358,27 +363,27 @@ class Component:
                 tempt_canvas = build123.protocol.build_sphere(
                     tempt_canvas, radius, location
                     )
+                self.save_process(tempt_canvas, self.main_canvas)
 
 
             else:
                 raise NotImplementedError(f"Unsupported CAD operation: {op_name}")
 
-            self.save_process(tempt_canvas, self.main_canvas)
         return tempt_canvas
 
 
     def save_process(self, tempt_canvas, full_canvas):
-        to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas, self.boolean)
+        # to_save_canvas = build123.protocol.merge_canvas(tempt_canvas, full_canvas, self.boolean)
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
         tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).stl"
         tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).step"
-        if to_save_canvas is not None and to_save_canvas.part is not None:
+        if tempt_canvas is not None:
             self.process_count += 1
 
-            helper.func_export_stl(to_save_canvas, str(tmp_stl))
-            helper.func_export_step(to_save_canvas, str(tmp_step))
+            helper.func_export_stl(tempt_canvas, str(tmp_stl))
+            helper.func_export_step(tempt_canvas, str(tmp_step))
 
     def save_single_sketch(self, standalone_sketch):
         output_dir = self.output_folder / "history"
@@ -449,6 +454,8 @@ class Component:
 
         for idx, loc in enumerate(self.absolute_locations):
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
+        if len(self.absolute_locations) > 1:
+            self.ops.append("pattern")
 
         self.cad_op_history = {helper.convert_labels(self.labels): self.ops}
 
@@ -457,8 +464,12 @@ class Component:
         for child in self.children:
             self.main_canvas, child_tempt_canvas, child_cad_op_history = child.build(self.main_canvas)
             tempt_canvas = build123.protocol.merge_canvas(child_tempt_canvas, tempt_canvas, child.boolean)
-            for key, ops in child_cad_op_history.items():
-                self.cad_op_history.setdefault(key, []).extend(ops)
+            
+            if isinstance(child_cad_op_history, dict):
+                for key, ops in child_cad_op_history.items():
+                    self.cad_op_history.setdefault(key, []).extend(ops)
+            else:
+                continue
 
         # Also save tempt canvas
         if tempt_canvas is not None:

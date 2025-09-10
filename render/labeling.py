@@ -138,6 +138,42 @@ def compute_tree_values(
     return result
 
 
+
+
+# ===========================
+# Operation to Stroke
+# ===========================
+def _load_operations_map(json_path: Path):
+    with open(json_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def op_to_stroke(current_folder, tree: Dict[str, Any]) -> None:
+    ops_path = current_folder / "output" / "cad_operations.json"
+    history_dir = current_folder / "output" / "history"
+
+    operations_map = _load_operations_map(ops_path)
+
+    def _walk(node: Dict[str, Any]) -> None:
+        children = node.get("children", [])
+        if not children:
+            full_name = node["name"]            # e.g., "0-1-1.step"
+            stem = full_name.rsplit(".", 1)[0]  # -> "0-1-1"
+
+            ops = operations_map.get(stem, [])
+            step_files = []
+            if history_dir.exists():
+                step_files = [p.name for p in history_dir.glob(f"{stem}(*).step")]
+
+            print(f"[leaf {stem}] operations = {ops}")
+            print(f"[leaf {stem}] history   = {step_files}")
+            return
+
+        for c in children:
+            _walk(c)
+
+    _walk(tree)
+
 # ===========================
 # Utilities
 # ===========================
@@ -192,13 +228,19 @@ if __name__ == "__main__":
     current_folder = Path.cwd().parent
     label_dir = current_folder / "output" / "seperable"
 
-    # 2) Build the tree
+    # 2) Build the trees (one per root .step file)
     trees = build_label_trees(label_dir)
 
     for tree in trees:
+        print("=" * 60)
+        print(f"Processing tree rooted at {tree['name']}")
+
         # 3) Compute values for all nodes
         value_map: Dict[str, NumberOrArray] = {}
-        root_value = compute_tree_values(tree, label_dir, value_map=value_map)
+        _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
-        # 4) Visualize every node
-        visualize_tree_values(tree, value_map)
+        # 4) Visualize every non-leaf node
+        # visualize_tree_values(tree, value_map)
+
+        # 5) Print leaf node operations and history step files
+        op_to_stroke(current_folder, tree)
