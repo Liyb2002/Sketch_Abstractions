@@ -113,7 +113,7 @@ def execute(component_obj, output_path):
     """
     output_path.mkdir(exist_ok=True)
 
-    canvas, _, _, cad_op_history = component_obj.build()
+    canvas, _, cad_op_history = component_obj.build()
     stl_path = output_path / f"final_{component_obj.labels[0]}.stl"
     step_path = output_path / f"final_{component_obj.labels[0]}.step"
     cad_operations_file = os.path.join(output_path, "cad_operations.json")

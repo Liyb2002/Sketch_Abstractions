@@ -25,6 +25,8 @@ class Component:
         self.parameters = data['parameters']
         self.location = data.get('location')
         self.cad_operations = data['cad_operations']
+        self.ops = []
+
         self.quantity = data.get('quantity', 1)
         self.locations = data.get('locations')
         self.boolean = data.get('boolean')
@@ -35,6 +37,7 @@ class Component:
         self.set_mating_params(data.get('mating_reference'))
 
         self.labels = labels
+        self.process_count = 0
 
     def param_init(self):
         """
@@ -224,6 +227,7 @@ class Component:
 
         for op in self.cad_operations:
             op_name = op["name"]
+            self.ops.append(op_name)
 
             if op_name == "sketch_rectangle":
                 half_x, half_y = x_len / 2, y_len / 2
@@ -368,8 +372,8 @@ class Component:
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
-        tmp_stl = output_dir / f"{self.labels[0]}_{self.process_count}.stl"
-        tmp_step = output_dir / f"{self.labels[0]}_{self.process_count}.step"
+        tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).stl"
+        tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).step"
         if to_save_canvas is not None and to_save_canvas.part is not None:
             self.process_count += 1
 
@@ -380,8 +384,8 @@ class Component:
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
-        tmp_stl = output_dir / f"{self.labels[0]}_{self.process_count}.stl"
-        tmp_step = output_dir / f"{self.labels[0]}_{self.process_count}.step"
+        tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).stl"
+        tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).step"
         if standalone_sketch is not None :
             self.process_count += 1
 
@@ -430,16 +434,14 @@ class Component:
         return coords
 
 
-    def build(self, canvas=None, process_count = 0):
+    def build(self, canvas=None):
         """
         Build this component and its children recursively.
         """
 
         if self.parent and self.condition !="None" and self.condition != self.parent.name:
-            return canvas, process_count, None, []
+            return canvas, None, []
 
-        self.cad_op_history = self.cad_operations
-        self.process_count = process_count
         self.main_canvas = canvas
 
         self.param_init()
@@ -448,12 +450,15 @@ class Component:
         for idx, loc in enumerate(self.absolute_locations):
             tempt_canvas = self.build_one_instance(idx, loc, tempt_canvas)
 
+        self.cad_op_history = {helper.convert_labels(self.labels): self.ops}
+
         self.main_canvas = build123.protocol.merge_canvas(tempt_canvas, self.main_canvas, self.boolean)
 
         for child in self.children:
-            self.main_canvas, self.process_count, child_tempt_canvas, child_cad_op_history = child.build(self.main_canvas, self.process_count)
+            self.main_canvas, child_tempt_canvas, child_cad_op_history = child.build(self.main_canvas)
             tempt_canvas = build123.protocol.merge_canvas(child_tempt_canvas, tempt_canvas, child.boolean)
-            self.cad_op_history += child_cad_op_history
+            for key, ops in child_cad_op_history.items():
+                self.cad_op_history.setdefault(key, []).extend(ops)
 
         # Also save tempt canvas
         if tempt_canvas is not None:
@@ -469,4 +474,4 @@ class Component:
             helper.func_export_stl(tempt_canvas, str(tmp_stl))
             helper.func_export_step(tempt_canvas, str(tmp_step))
 
-        return self.main_canvas, self.process_count, tempt_canvas, self.cad_op_history
+        return self.main_canvas, tempt_canvas, self.cad_op_history

@@ -41,3 +41,8 @@ def clean_dir(path: Path) -> None:
                 shutil.rmtree(child, ignore_errors=True)
         except Exception as e:
             print(f"Warning: failed to remove {child}: {e}")
+
+
+def convert_labels(labels):
+    # Convert each element to string, replace '.' with '-' if float
+    return "-".join(str(label).replace(".", "-") for label in labels)

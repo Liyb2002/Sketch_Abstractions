@@ -1,26 +1,32 @@
-[
-    {
-        "name": "sketch_circle"
-    },
-    {
-        "name": "extrude"
-    },
-    {
-        "name": "sketch_rectangle"
-    },
-    {
-        "name": "extrude"
-    },
-    {
-        "name": "build_sphere"
-    },
-    {
-        "name": "sketch_rectangle"
-    },
-    {
-        "name": "extrude"
-    },
-    {
-        "name": "build_sphere"
-    }
-]
+{
+    "0": [],
+    "0-0": [
+        "sketch_rectangle",
+        "extrude",
+        "fillet_or_chamfer"
+    ],
+    "0-1": [],
+    "0-1-0": [
+        "sketch_rectangle",
+        "extrude",
+        "fillet_or_chamfer"
+    ],
+    "0-1-1": [
+        "sketch_triangle",
+        "extrude"
+    ],
+    "0-2": [],
+    "0-2-0": [
+        "sketch_circle",
+        "extrude"
+    ],
+    "0-2-1": [
+        "sketch_triangle",
+        "extrude"
+    ],
+    "0-3": [
+        "sketch_circle",
+        "sweep",
+        "mirror"
+    ]
+}
