@@ -670,3 +670,157 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
         plt.show()
 
     return fig, ax
+
+
+
+def vis_labeled_strokes(perturbed_feature_lines,
+                        perturbed_construction_lines,
+                        cuts,
+                        label_id,
+                        linewidth=0.8,
+                        show=True):
+    """
+    Same visualization as vis_perturbed_strokes, but:
+      - ALL strokes are drawn (context) in the default style (black).
+      - ONLY the selected label slice (by cuts & label_id) is overplotted in RED.
+
+    cuts: {
+      "perturbed_features": [c0, c1, ..., cK],
+      "perturbed_constructions": [c0, c1, ..., cK],
+      ... (other keys ignored)
+    }
+    label_id: which child slice to highlight (0..K-1)
+    """
+
+    # ---------- helpers (aligned with vis_perturbed_strokes) ----------
+    def is_number(v):
+        return isinstance(v, (int, float))
+
+    def is_point(p):
+        return (
+            isinstance(p, (list, tuple))
+            and len(p) >= 3
+            and all(is_number(v) for v in p[:3])
+        )
+
+    def is_polyline(obj):
+        return (
+            isinstance(obj, (list, tuple))
+            and len(obj) > 0
+            and all(is_point(p) for p in obj)
+        )
+
+    def flatten_polylines(obj):
+        out = []
+        if obj is None:
+            return out
+        if is_polyline(obj):
+            out.append([[p[0], p[1], p[2]] for p in obj])  # keep only xyz
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                out.extend(flatten_polylines(item))
+        return out
+
+    # ---------- slice indices ----------
+    pf_cuts = cuts.get("perturbed_features", None)
+    pc_cuts = cuts.get("perturbed_constructions", None)
+    if pf_cuts is None or pc_cuts is None:
+        raise ValueError("cuts must contain 'perturbed_features' and 'perturbed_constructions' lists.")
+
+    if not (0 <= label_id < len(pf_cuts) - 1) or not (0 <= label_id < len(pc_cuts) - 1):
+        raise IndexError(f"label_id={label_id} out of range for provided cuts.")
+
+    pf_start, pf_end = pf_cuts[label_id], pf_cuts[label_id + 1]
+    pc_start, pc_end = pc_cuts[label_id], pc_cuts[label_id + 1]
+
+    # ---------- build context (others) and selection ----------
+    # raw (possibly nested) groups
+    pf_sel_raw = perturbed_feature_lines[pf_start:pf_end]
+    pc_sel_raw = perturbed_construction_lines[pc_start:pc_end]
+    pf_ctx_raw = perturbed_feature_lines[:pf_start] + perturbed_feature_lines[pf_end:]
+    pc_ctx_raw = perturbed_construction_lines[:pc_start] + perturbed_construction_lines[pc_end:]
+
+    # flatten into polylines of xyz points
+    feat_sel = flatten_polylines(pf_sel_raw)
+    cons_sel = flatten_polylines(pc_sel_raw)
+    feat_ctx = flatten_polylines(pf_ctx_raw)
+    cons_ctx = flatten_polylines(pc_ctx_raw)
+
+    # If nothing to show at all, bail
+    if not (feat_sel or cons_sel or feat_ctx or cons_ctx):
+        print(f"Label {label_id}: no lines to visualize.")
+        return None, None
+
+    # ---------- bounds over ALL content (context + selected) ----------
+    x_min = y_min = z_min = float("inf")
+    x_max = y_max = z_max = float("-inf")
+
+    def update_bounds(lines):
+        nonlocal x_min, y_min, z_min, x_max, y_max, z_max
+        for pts in lines:
+            for x, y, z in pts:
+                if x < x_min: x_min = x
+                if y < y_min: y_min = y
+                if z < z_min: z_min = z
+                if x > x_max: x_max = x
+                if y > y_max: y_max = y
+                if z > z_max: z_max = z
+
+    update_bounds(feat_ctx); update_bounds(cons_ctx)
+    update_bounds(feat_sel); update_bounds(cons_sel)
+
+    x_center = (x_min + x_max) / 2.0
+    y_center = (y_min + y_max) / 2.0
+    z_center = (z_min + z_max) / 2.0
+
+    max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+    if max_diff == 0:
+        max_diff = 1.0
+    half = max_diff / 2.0
+
+    # ---------- plot ----------
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_axis_off()
+    ax.grid(False)
+
+    # Context first (black), same style as vis_perturbed_strokes
+    for pts in feat_ctx:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="black",
+                linewidth=linewidth,
+                alpha=random.uniform(0.9, 1.0))
+    cons_width = max(0.1, 0.6 * linewidth)
+    for pts in cons_ctx:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="black",
+                linewidth=cons_width,
+                alpha=random.uniform(0.2, 0.5))
+
+    # Selection on top (red)
+    for pts in feat_sel:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="red",
+                linewidth=linewidth,
+                alpha=random.uniform(0.9, 1.0))
+    for pts in cons_sel:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="red",
+                linewidth=cons_width,
+                alpha=random.uniform(0.2, 0.5))
+
+    # Equalize axes
+    ax.set_xlim([x_center - half, x_center + half])
+    ax.set_ylim([y_center - half, y_center + half])
+    ax.set_zlim([z_center - half, z_center + half])
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    ax.view_init(elev=100, azim=45)
+
+    if show:
+        plt.show()
+
+    return fig, ax

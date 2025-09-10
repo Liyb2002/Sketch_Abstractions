@@ -11,6 +11,14 @@ import perturb_strokes
 current_folder = Path.cwd().parent
 files = (current_folder / "output").glob("final_*.step")
 
+#SetUp:
+#We have abstract format, where each line is 10 values
+#We have sampled point format, where each line is 10 points, OR, a list of lines (each has 10 points)
+#We have feature_lines and intermediate lines in abstract format
+#We use line_utils to create more lines in abstract format
+#do_perturb() will take abstract format to sampled point format. The number of lines in both format is the same
+
+
 for filename in files:
 
     #0)Get file info
