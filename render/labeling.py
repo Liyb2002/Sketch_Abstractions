@@ -91,6 +91,7 @@ def compute_tree_values(
     if not children:
         step_path = label_dir / name
         feature_lines, perturbed_feature_lines, perturbed_construction_lines = compute_value(step_path)
+        op_to_stroke(feature_lines, step_path)
 
         result = {
             "features": feature_lines,
@@ -148,31 +149,29 @@ def _load_operations_map(json_path: Path):
         return json.load(f)
 
 
-def op_to_stroke(current_folder, tree: Dict[str, Any]) -> None:
+def op_to_stroke(feature_lines, step_path):
     ops_path = current_folder / "output" / "cad_operations.json"
-    history_dir = current_folder / "output" / "history"
-
     operations_map = _load_operations_map(ops_path)
 
-    def _walk(node: Dict[str, Any]) -> None:
-        children = node.get("children", [])
-        if not children:
-            full_name = node["name"]            # e.g., "0-1-1.step"
-            stem = full_name.rsplit(".", 1)[0]  # -> "0-1-1"
+    history_dir = current_folder / "output" / "history"
 
-            ops = operations_map.get(stem, [])
-            step_files = []
-            if history_dir.exists():
-                step_files = [p.name for p in history_dir.glob(f"{stem}(*).step")]
+    # Extract stem (e.g., "0-0" from "0-0.step")
+    step_path = Path(step_path)
+    stem = step_path.stem  
 
-            print(f"[leaf {stem}] operations = {ops}")
-            print(f"[leaf {stem}] history   = {step_files}")
-            return
+    # Get operations for this step
+    ops = operations_map.get(stem, [])
 
-        for c in children:
-            _walk(c)
+    # Collect related step files in history
+    step_files = []
+    if history_dir.exists():
+        step_files = [p.name for p in history_dir.glob(f"{stem}(*).step")]
 
-    _walk(tree)
+    print("Operations:", ops)
+    print("History step files:", step_files)
+
+
+
 
 # ===========================
 # Utilities
@@ -242,5 +241,3 @@ if __name__ == "__main__":
         # 4) Visualize every non-leaf node
         # visualize_tree_values(tree, value_map)
 
-        # 5) Print leaf node operations and history step files
-        op_to_stroke(current_folder, tree)
