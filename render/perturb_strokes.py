@@ -135,30 +135,31 @@ def perturb_straight_line(stroke, rng=None):
 
 
 
-def perturb_circle(stroke, start_angle=0.0, rng=None, samples = 20):
+def perturb_circle(stroke, start_angle=0.0, rng=None, samples=20):
     """
-    Perturb/synthesize a hand-drawn-looking CLOSED circle polyline (10 points).
+    Perturb/synthesize a hand-drawn-looking CLOSED circle polyline (samples+1 points).
     Input stroke: [cx,cy,cz, nx,ny,nz, 0, radius, 0, 2]  (radius at index 7)
-    Returns: list of 10 points [x,y,z], with pts[-1] == pts[0].
+    Returns: list of (samples+1) points [x,y,z], with pts[-1] == pts[0].
     """
+    import math, random
     if rng is None:
         rng = random
 
-    # --- parse ---
-    cx, cy, cz = float(stroke[0]), float(stroke[1]), float(stroke[2])
-    nx, ny, nz = float(stroke[3]), float(stroke[4]), float(stroke[5])
+    # --- parse stroke ---
+    cx, cy, cz = map(float, stroke[:3])
+    nx, ny, nz = map(float, stroke[3:6])
     R = float(stroke[7])
 
     # --- vec utils ---
     def dot(a, b): return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
     def add(a, b): return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]
     def mul(a, s): return [a[0]*s, a[1]*s, a[2]*s]
-    def cross(a, b):
-        return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+    def cross(a, b): return [a[1]*b[2]-a[2]*b[1],
+                             a[2]*b[0]-a[0]*b[2],
+                             a[0]*b[1]-a[1]*b[0]]
     def norm(a):
         L2 = dot(a, a)
-        if L2 <= 0.0:
-            return [0.0, 0.0, 1.0]
+        if L2 <= 0.0: return [0.0, 0.0, 1.0]
         L = math.sqrt(L2)
         return [a[0]/L, a[1]/L, a[2]/L]
 
@@ -167,7 +168,7 @@ def perturb_circle(stroke, start_angle=0.0, rng=None, samples = 20):
     if abs(n[0]) + abs(n[1]) + abs(n[2]) < 1e-12:
         n = [0.0, 0.0, 1.0]
 
-    # --- build in-plane orthonormal basis (right-handed) ---
+    # --- build orthonormal basis in plane ---
     ref = [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 else [0.0, 1.0, 0.0]
     u = norm(cross(n, ref))
     if abs(u[0]) + abs(u[1]) + abs(u[2]) < 1e-12:
@@ -176,26 +177,27 @@ def perturb_circle(stroke, start_angle=0.0, rng=None, samples = 20):
     v = cross(n, u)
 
     if R <= 1e-12:
-        # Degenerate: return closed “point circle”
+        # Degenerate: return closed "point circle"
         p = center[:]
-        return [p, p, p, p, p, p, p, p, p, p]
+        return [p] * (samples + 1)
 
-    # --- ellipse-ish params & jitter (non-uniform angles) ---
+    # --- ellipse-ish params & jitter ---
     rx = R * rng.uniform(0.9, 1.1)
     ry = R * rng.uniform(0.9, 1.1)
-    phi = rng.uniform(0.0, 2.0 * math.pi)             # in-plane rotation
-    jitter_2d = rng.uniform(0.001, 0.004) * R         # wobble in plane
-    angle_jitter = 0.15                                # radians; < (2π/9)/2 so order stays increasing
+    phi = rng.uniform(0.0, 2.0 * math.pi)
+    jitter_2d = rng.uniform(0.001, 0.004) * R
+
+    step = 2.0 * math.pi / samples
+    angle_jitter = min(0.45 * step, 0.15)  # keep point order safe
 
     cphi, sphi = math.cos(phi), math.sin(phi)
 
-    # --- 9 slightly non-uniform angles (then close with first) ---
     pts = []
-    for i in range(samples):  # 0..8
-        base = start_angle + 2.0 * math.pi * (i / 9.0)
+    for i in range(samples):
+        base = start_angle + step * i
         t = base + rng.uniform(-angle_jitter, angle_jitter)
 
-        # ellipse in local 2D (then rotate by phi)
+        # ellipse in local 2D (then rotate)
         x = rx * math.cos(t)
         y = ry * math.sin(t)
         xr = cphi * x - sphi * y
@@ -209,18 +211,17 @@ def perturb_circle(stroke, start_angle=0.0, rng=None, samples = 20):
         p = add(center, add(mul(u, xr), mul(v, yr)))
         pts.append(p)
 
-    # optional gentle seam smoothing before closing
+    # optional seam smoothing near the end
     seam_shift_len = rng.uniform(0.05, 0.1) * R
     seam_shift = [rng.gauss(0.0, seam_shift_len),
                   rng.gauss(0.0, seam_shift_len),
                   rng.gauss(0.0, seam_shift_len)]
-    for idx, w in zip([8, 7, 6], [1.0, 0.8, 0.6]):
-        pts[idx] = add(pts[idx], mul(seam_shift, w))
+    for k, w in zip(range(samples-1, max(samples-4, -1), -1), [1.0, 0.8, 0.6]):
+        pts[k] = add(pts[k], mul(seam_shift, w))
 
     # close the loop
     pts.append(pts[0][:])
     return pts
-
 
 
 def perturb_cylinder_face(stroke, rng=None):
@@ -808,6 +809,164 @@ def vis_labeled_strokes(perturbed_feature_lines,
         ax.plot(xs, ys, zs, color="red",
                 linewidth=cons_width,
                 alpha=random.uniform(0.2, 0.5))
+
+    # Equalize axes
+    ax.set_xlim([x_center - half, x_center + half])
+    ax.set_ylim([y_center - half, y_center + half])
+    ax.set_zlim([z_center - half, z_center + half])
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    ax.view_init(elev=100, azim=45)
+
+    if show:
+        plt.show()
+
+    return fig, ax
+
+
+
+def vis_Op_to_strokes(
+    perturbed_feature_lines,
+    perturbed_construction_lines,
+    cuts,          # list[int] like [0, 5, 12, ...]
+    op_id,         # which slice to highlight (0..len(cuts)-2)
+    ops,           # print ops[op_id]
+    linewidth=1.5, # drawing width for selected; ctx width scaled below
+    show=True
+):
+    """
+    Visualize:
+      - Feature lines: selected slice (cuts & op_id) in RED; all other feature lines in BLACK.
+      - Construction lines: ALL in BLACK.
+      - Prints ops[op_id].
+
+    Input:
+      perturbed_feature_lines:   nested polylines of xyz points
+      perturbed_construction_lines: nested polylines of xyz points
+      cuts: list[int], monotonic, len>=2
+      op_id: int in [0, len(cuts)-2]
+      ops: indexable (ops[op_id] will be printed)
+    """
+
+    # -------- helpers ----------
+    def is_number(v):
+        return isinstance(v, (int, float))
+
+    def is_point(p):
+        return (
+            isinstance(p, (list, tuple))
+            and len(p) >= 3
+            and all(is_number(v) for v in p[:3])
+        )
+
+    def is_polyline(obj):
+        return (
+            isinstance(obj, (list, tuple))
+            and len(obj) > 0
+            and all(is_point(p) for p in obj)
+        )
+
+    def flatten_polylines(obj):
+        out = []
+        if obj is None:
+            return out
+        if is_polyline(obj):
+            out.append([[p[0], p[1], p[2]] for p in obj])  # keep only xyz
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                out.extend(flatten_polylines(item))
+        return out
+
+
+    # -------- compute slice per your rule ----------
+    if op_id == 0:
+        f_start, f_end = 0, cuts[0]
+    else:
+        f_start, f_end = cuts[op_id - 1], cuts[op_id]
+
+    # -------- build raw groups ----------
+    feat_sel_raw = perturbed_feature_lines[f_start:f_end]
+    feat_ctx_raw = perturbed_feature_lines[:f_start] + perturbed_feature_lines[f_end:]
+    cons_ctx_raw = perturbed_construction_lines  # all constructions are context (black)
+
+    # -------- flatten ----------
+    feat_sel = flatten_polylines(feat_sel_raw)
+    feat_ctx = flatten_polylines(feat_ctx_raw)
+    cons_ctx = flatten_polylines(cons_ctx_raw)
+
+    if not (feat_sel or feat_ctx or cons_ctx):
+        print(f"Cut {op_id}: nothing to visualize.")
+        try:
+            print("ops[op_id] =", ops[op_id])
+        except Exception as e:
+            print("Could not print ops[op_id]:", e)
+        return None, None
+
+    # -------- print the op --------
+    try:
+        print("ops[op_id] =", ops[op_id])
+    except Exception as e:
+        print("Could not print ops[op_id]:", e)
+
+    # -------- bounds (over ALL content) ----------
+    x_min = y_min = z_min = float("inf")
+    x_max = y_max = z_max = float("-inf")
+
+    def update_bounds(lines):
+        nonlocal x_min, y_min, z_min, x_max, y_max, z_max
+        for pts in lines:
+            for x, y, z in pts:
+                if x < x_min: x_min = x
+                if y < y_min: y_min = y
+                if z < z_min: z_min = z
+                if x > x_max: x_max = x
+                if y > y_max: y_max = y
+                if z > z_max: z_max = z
+
+    update_bounds(feat_ctx); update_bounds(cons_ctx)
+    update_bounds(feat_sel)
+
+    x_center = (x_min + x_max) / 2.0
+    y_center = (y_min + y_max) / 2.0
+    z_center = (z_min + z_max) / 2.0
+
+    max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+    if max_diff == 0:
+        max_diff = 1.0
+    half = max_diff / 2.0
+
+    # -------- plot ----------
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_axis_off()
+    ax.grid(False)
+
+    cons_width = max(0.1, 0.6 * linewidth)  # thinner for constructions
+    ctx_width  = linewidth                  # feature context same width as selected for visibility
+
+    # Construction lines: all black (thinner, lower alpha)
+    for pts in cons_ctx:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="black",
+                linewidth=cons_width,
+                alpha=random.uniform(0.2, 0.5))
+
+    # Feature context: black
+    for pts in feat_ctx:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="black",
+                linewidth=ctx_width,
+                alpha=random.uniform(0.8, 1.0))
+
+    # Feature selection: red
+    for pts in feat_sel:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        ax.plot(xs, ys, zs, color="red",
+                linewidth=linewidth,
+                alpha=random.uniform(0.9, 1.0))
 
     # Equalize axes
     ax.set_xlim([x_center - half, x_center + half])

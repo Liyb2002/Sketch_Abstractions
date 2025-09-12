@@ -227,9 +227,9 @@ class Component:
 
         for op in self.cad_operations:
             op_name = op["name"]
-            self.ops.append(op_name)
 
             if op_name == "sketch_rectangle":
+                self.ops.append("sketch")
                 half_x, half_y = x_len / 2, y_len / 2
                 new_point_list = [
                     [x - half_x, y - half_y, z],
@@ -243,6 +243,7 @@ class Component:
                 self.save_single_sketch(standalone_sketch)
 
             elif op_name == "sketch_circle":
+                self.ops.append("sketch")
                 radius = x_len / 2
                 center = [x,y,z]
 
@@ -271,6 +272,7 @@ class Component:
                 self.save_single_sketch(standalone_sketch)
 
             elif op_name == "sketch_triangle":
+                self.ops.append("sketch")
                 # Isosceles triangle centered at (x, y).
                 # Base length = x_len, height = y_len.
                 half_x, half_y = x_len / 2, y_len / 2
@@ -286,6 +288,7 @@ class Component:
                 self.save_single_sketch(standalone_sketch)
 
             elif op_name == "extrude":
+                self.ops.append("extrude")
                 if sketch is None:
                     raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
                 tempt_canvas = build123.protocol.build_extrude(
@@ -296,7 +299,6 @@ class Component:
             elif op_name == "fillet_or_chamfer":
                 prob = op.get("probability", 1.0)
                 if random.random() > prob:
-                    print(f"Skipping fillet/chamfer on {self.name} instance {idx+1} (probability={prob})")
                     continue
 
                 sub_params = op.get("sub_parameters", {})
@@ -311,6 +313,7 @@ class Component:
                 edges_in_canvas = tempt_canvas.edges()
 
                 if random.random() > 0.5:
+                    self.ops.append("fillet")
                     for edge_idx in edge_indices:
                         target_edge = edges_in_canvas[edge_idx]
                         tempt_canvas = build123.protocol.build_fillet(
@@ -318,6 +321,7 @@ class Component:
                         )
                 else:
                     for edge_idx in edge_indices:
+                        self.ops.append("chamfer")
                         target_edge = edges_in_canvas[edge_idx]
                         tempt_canvas = build123.protocol.build_chamfer(
                             tempt_canvas, target_edge, radius
@@ -326,6 +330,7 @@ class Component:
                 self.save_process(tempt_canvas, self.main_canvas)
 
             elif op_name == "sweep":
+                self.ops.append("sweep")
                 self.path = self.parse_eval_list(self.path)
                 if sketch is None:
                     raise RuntimeError(f"Cannot extrude: no sketch created for {self.name}")
@@ -335,6 +340,7 @@ class Component:
                 self.save_process(tempt_canvas, self.main_canvas)
                            
             elif op_name == "mirror":
+                self.ops.append("mirror")
                 tempt_canvas = build123.protocol.build_mirror(
                     tempt_canvas
                 )

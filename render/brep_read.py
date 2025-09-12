@@ -337,6 +337,9 @@ def create_edge_node(edge):
     # --- STRAIGHT LINE (default) ---
     p_start = adap.Value(u_first)
     p_end   = adap.Value(u_last)
+
+    if p_start.Distance(p_end) < 1.0e-2:
+        return None
     return [*p2t(p_start), *p2t(p_end), 0.0, 0.0, 0.0, 1]
 
 

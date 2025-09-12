@@ -3,11 +3,14 @@ import os
 import json
 from typing import Dict, Any, Union, Tuple, List
 import numpy as np
+import re
 
 
 import line_utils
 import perturb_strokes
 import brep_read
+import helper
+
 
 NumberOrArray = Union[float, int, np.ndarray, str]
 
@@ -90,8 +93,7 @@ def compute_tree_values(
     # ---- Leaf ----
     if not children:
         step_path = label_dir / name
-        feature_lines, perturbed_feature_lines, perturbed_construction_lines = compute_value(step_path)
-        op_to_stroke(feature_lines, step_path)
+        feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(step_path)
 
         result = {
             "features": feature_lines,
@@ -149,7 +151,9 @@ def _load_operations_map(json_path: Path):
         return json.load(f)
 
 
-def op_to_stroke(feature_lines, step_path):
+def op_to_stroke(step_path):
+
+    #1)Path Preparation
     ops_path = current_folder / "output" / "cad_operations.json"
     operations_map = _load_operations_map(ops_path)
 
@@ -163,12 +167,52 @@ def op_to_stroke(feature_lines, step_path):
     ops = operations_map.get(stem, [])
 
     # Collect related step files in history
-    step_files = []
-    if history_dir.exists():
-        step_files = [p.name for p in history_dir.glob(f"{stem}(*).step")]
+    step_files = [p.name for p in history_dir.glob(f"{stem}(*).step")]
+    step_files = sorted(step_files,
+        key=lambda f: int(re.search(r"\((\d+)\)", f).group(1)))
 
-    print("Operations:", ops)
-    print("History step files:", step_files)
+
+    #2)Features Accumulation 
+    edge_features_list = []
+    cylinder_features_list = []
+    feature_lines = []
+    cut_off = []
+
+    for step_file in step_files:
+        file_path = history_dir / step_file
+        tmpt_edge_features_list, tmpt_cylinder_features_list = brep_read.sample_strokes_from_step_file(
+            str(file_path)
+        )
+
+        # Extend accumulators
+        new_edge_features, new_cylinder_features = helper.find_intermediate_lines(
+            edge_features_list,
+            cylinder_features_list,
+            tmpt_edge_features_list,
+            tmpt_cylinder_features_list)
+        
+        edge_features_list += new_edge_features
+        cylinder_features_list += new_cylinder_features
+        feature_lines += new_edge_features
+        feature_lines += new_cylinder_features
+
+        cut_off.append(len(feature_lines))
+    
+
+
+    #3)Get the construction lines
+    projection_line = line_utils.projection_lines(feature_lines)
+    projection_line += line_utils.derive_construction_lines_for_splines_and_spheres(feature_lines)
+    # bounding_box_line = line_utils.bounding_box_lines(feature_lines)
+
+
+    perturbed_feature_lines = perturb_strokes.do_perturb(feature_lines)
+    perturbed_construction_lines = perturb_strokes.do_perturb(projection_line)
+
+    # for idx, _ in enumerate(ops):
+    #     perturb_strokes.vis_Op_to_strokes(perturbed_feature_lines, perturbed_construction_lines, cut_off, idx, ops)
+
+    return feature_lines, perturbed_feature_lines, perturbed_construction_lines
 
 
 
@@ -236,8 +280,8 @@ if __name__ == "__main__":
 
         # 3) Compute values for all nodes
         value_map: Dict[str, NumberOrArray] = {}
-        _ = compute_tree_values(tree, label_dir, value_map=value_map)
+        _ = compute_tree_values(trees[0], label_dir, value_map=value_map)
 
         # 4) Visualize every non-leaf node
-        # visualize_tree_values(tree, value_map)
+        visualize_tree_values(trees[0], value_map)
 

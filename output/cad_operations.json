@@ -1,32 +1,23 @@
 {
-    "0": [],
-    "0-0": [
-        "sketch_rectangle",
-        "extrude",
-        "fillet_or_chamfer"
-    ],
-    "0-1": [],
-    "0-1-0": [
-        "sketch_rectangle",
-        "extrude",
-        "fillet_or_chamfer"
-    ],
-    "0-1-1": [
-        "sketch_circle",
+    "1": [],
+    "1-0": [
+        "sketch",
         "extrude"
     ],
-    "0-2": [],
-    "0-2-0": [
-        "sketch_circle",
+    "1-1": [],
+    "1-1-0": [
+        "sketch",
         "extrude"
     ],
-    "0-2-1": [
-        "sketch_rectangle",
+    "1-1-1": [
+        "pattern"
+    ],
+    "1-2": [],
+    "1-2-0": [
+        "sketch",
         "extrude"
     ],
-    "0-3": [
-        "sketch_circle",
-        "sweep",
-        "mirror"
+    "1-2-1": [
+        "pattern"
     ]
 }

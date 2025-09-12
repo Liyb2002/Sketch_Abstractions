@@ -3,99 +3,97 @@ from build123d import *
 import os
 import numpy as np
 from build123d import BuildPart, add
+from build123d import BuildSketch, Plane, Circle, Vector
 
+
+from build123d import BuildSketch, BuildLine, Line, Plane, Vector, Location, make_face
+
+def _plane_from_canvas(canvas):
+    if canvas is None:
+        return Plane.XY
+    if isinstance(canvas, Plane):
+        return canvas
+    try:
+        return Plane(canvas)  # works for planar faces
+    except Exception:
+        pass
+    for attr in ("plane", "workplane"):
+        if hasattr(canvas, attr) and isinstance(getattr(canvas, attr), Plane):
+            return getattr(canvas, attr)
+    return Plane.XY
 
 def build_sketch(canvas, Points_list):
-    # --- NEW: build the sketch on a fresh, empty canvas and keep it ---
-    with BuildSketch() as standalone_ctx:
+    # 1) Get the plane we want to use
+    plane = _plane_from_canvas(canvas)
+
+    # 2) Build a brand-new, empty sketch on that plane (standalone)
+    with BuildSketch(plane) as standalone_ctx:
         with BuildLine():
-            lines = []
             for i in range(len(Points_list)):
-                start_point_sublist = Points_list[i]
-                end_point_sublist = Points_list[(i+1) % len(Points_list)]  # wrap around
+                p0w = Vector(*Points_list[i])
+                p1w = Vector(*Points_list[(i + 1) % len(Points_list)])
 
-                start_point = (
-                    start_point_sublist[0],
-                    start_point_sublist[1],
-                    start_point_sublist[2]
-                )
-                end_point = (
-                    end_point_sublist[0],
-                    end_point_sublist[1],
-                    end_point_sublist[2]
-                )
+                # Convert world -> plane-local 2D
+                p0 = plane.to_local_coords(p0w)
+                p1 = plane.to_local_coords(p1w)
 
-                line = Line(start_point, end_point)
-                lines.append(line)
-        _ = make_face()  # keep consistent with your original behavior
-    standalone_sketch = standalone_ctx.sketch
-    # --- END NEW ---
+                Line((p0.X, p0.Y), (p1.X, p1.Y))
+        _ = make_face()
 
-    # Your original behavior below (unchanged)
+    # 3) IMPORTANT: bake the plane transform so the returned sketch is in world coords
+    #    (some downstream code/tools look only at geometry, not the sketch's plane)
+    try:
+        standalone_sketch_world = standalone_ctx.sketch.moved(plane.location)
+    except AttributeError:
+        # some versions prefer the @ operator
+        standalone_sketch_world = standalone_ctx.sketch @ plane.location
+
+    # ---- Your original perimeter behavior (unchanged) ----
     if canvas is None:
-        with BuildSketch():
+        with BuildSketch(plane) as ctx:
             with BuildLine():
-                lines = []
                 for i in range(len(Points_list)):
-                    start_point_sublist = Points_list[i]
-                    end_point_sublist = Points_list[(i+1) % len(Points_list)]  # wrap around
-
-                    start_point = (
-                        start_point_sublist[0],
-                        start_point_sublist[1],
-                        start_point_sublist[2]
-                    )
-                    end_point = (
-                        end_point_sublist[0],
-                        end_point_sublist[1],
-                        end_point_sublist[2]
-                    )
-
-                    line = Line(start_point, end_point)
-                    lines.append(line)
+                    a = Points_list[i]; b = Points_list[(i + 1) % len(Points_list)]
+                    pa = plane.to_local_coords(Vector(*a))
+                    pb = plane.to_local_coords(Vector(*b))
+                    Line((pa.X, pa.Y), (pb.X, pb.Y))
             perimeter = make_face()
-
     else:
-        with canvas: 
-            with BuildSketch():
+        with canvas:
+            with BuildSketch(plane) as ctx:
                 with BuildLine():
-                    lines = []
                     for i in range(len(Points_list)):
-                        start_point_sublist = Points_list[i]
-                        end_point_sublist = Points_list[(i+1) % len(Points_list)]  # wrap around
-
-                        start_point = (
-                            start_point_sublist[0],
-                            start_point_sublist[1],
-                            start_point_sublist[2]
-                        )
-                        end_point = (
-                            end_point_sublist[0],
-                            end_point_sublist[1],
-                            end_point_sublist[2]
-                        )
-
-                        line = Line(start_point, end_point)
-                        lines.append(line)
-
+                        a = Points_list[i]; b = Points_list[(i + 1) % len(Points_list)]
+                        pa = plane.to_local_coords(Vector(*a))
+                        pb = plane.to_local_coords(Vector(*b))
+                        Line((pa.X, pa.Y), (pb.X, pb.Y))
                 perimeter = make_face()
 
-    return perimeter, standalone_sketch
+    return perimeter, standalone_sketch_world
 
 
-def build_circle(radius, center, normal):
-    # create a sketch on the plane defined by center + normal
-    with BuildSketch(
-        Plane(origin=(center[0], center[1], center[2]),
-              z_dir=(normal[0], normal[1], normal[2]))
-    ) as ctx:
+def build_circle(radius, center, normal, canvas=None):
+    # --- Standalone sketch (new, empty, only plane info copied) ---
+    circle_plane = Plane(origin=Vector(*center), z_dir=Vector(*normal))
+
+    with BuildSketch(circle_plane) as standalone_ctx:
         Circle(radius=radius)
 
-    # face built from the sketch's wire(s)
-    face = ctx.sketch.face()
+    standalone_sketch = standalone_ctx.sketch
+    standalone_face = standalone_sketch.face()  # optional, but parallel to sketch
 
-    # return both: the face (as before) AND the "standalone" sketch
-    return face, ctx.sketch
+    # --- Perimeter (original behavior) ---
+    if canvas is None:
+        with BuildSketch(circle_plane) as ctx:
+            Circle(radius=radius)
+        perimeter = ctx.sketch.face()
+    else:
+        with canvas:
+            with BuildSketch(circle_plane) as ctx:
+                Circle(radius=radius)
+            perimeter = ctx.sketch.face()
+
+    return perimeter, standalone_sketch
 
 
 
