@@ -280,8 +280,7 @@ if __name__ == "__main__":
 
         # 3) Compute values for all nodes
         value_map: Dict[str, NumberOrArray] = {}
-        _ = compute_tree_values(trees[0], label_dir, value_map=value_map)
+        _ = compute_tree_values(trees[1], label_dir, value_map=value_map)
 
         # 4) Visualize every non-leaf node
-        visualize_tree_values(trees[0], value_map)
-
+        visualize_tree_values(trees[1], value_map)

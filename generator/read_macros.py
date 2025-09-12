@@ -110,18 +110,42 @@ def execute(component_obj, output_path):
     """
     Execute a Component and all its children recursively.
     Export result to .stl and .step
+    Append cad_op_history to cad_operations.json if it exists.
     """
     output_path.mkdir(exist_ok=True)
 
     canvas, _, cad_op_history = component_obj.build()
     stl_path = output_path / f"final_{component_obj.labels[0]}.stl"
     step_path = output_path / f"final_{component_obj.labels[0]}.step"
-    cad_operations_file = os.path.join(output_path, "cad_operations.json")
+    cad_operations_file = output_path / "cad_operations.json"
 
     helper.func_export_stl(canvas, str(stl_path))
     helper.func_export_step(canvas, str(step_path))
+
+    # --- load existing JSON if available ---
+    if cad_operations_file.exists():
+        with open(cad_operations_file, "r", encoding="utf-8") as f:
+            try:
+                existing_ops = json.load(f)
+            except json.JSONDecodeError:
+                existing_ops = {}
+    else:
+        existing_ops = {}
+
+    # --- merge histories ---
+    # if cad_op_history is a dict, merge dicts
+    # if it's a list, append
+    if isinstance(existing_ops, dict) and isinstance(cad_op_history, dict):
+        existing_ops.update(cad_op_history)
+    elif isinstance(existing_ops, list) and isinstance(cad_op_history, list):
+        existing_ops.extend(cad_op_history)
+    else:
+        # fallback: store separately under a new key
+        existing_ops[f"run_{len(existing_ops)+1}"] = cad_op_history
+
+    # --- save updated file ---
     with open(cad_operations_file, "w", encoding="utf-8") as f:
-        json.dump(cad_op_history, f, indent=4, ensure_ascii=False)
+        json.dump(existing_ops, f, indent=4, ensure_ascii=False)
 
     print(f"✅ Exported full assembly: {stl_path} and {step_path}")
     return None

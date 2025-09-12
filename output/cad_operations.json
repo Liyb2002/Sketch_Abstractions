@@ -1,4 +1,34 @@
 {
+    "0": [],
+    "0-0": [
+        "sketch",
+        "extrude",
+        "fillet"
+    ],
+    "0-1": [],
+    "0-1-0": [
+        "sketch",
+        "extrude",
+        "fillet"
+    ],
+    "0-1-1": [
+        "sketch",
+        "extrude"
+    ],
+    "0-2": [],
+    "0-2-0": [
+        "sketch",
+        "extrude"
+    ],
+    "0-2-1": [
+        "sketch",
+        "extrude"
+    ],
+    "0-3": [
+        "sketch",
+        "sweep",
+        "mirror"
+    ],
     "1": [],
     "1-0": [
         "sketch",

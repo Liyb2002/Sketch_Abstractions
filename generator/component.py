@@ -237,8 +237,8 @@ class Component:
                     [x + half_x, y + half_y, z],
                     [x - half_x, y + half_y, z]
                 ]
-                sketch, standalone_sketch = build123.protocol.build_sketch(
-                    tempt_canvas, new_point_list
+                sketch = build123.protocol.build_sketch(
+                    new_point_list
                 )
                 self.save_single_sketch(standalone_sketch)
 
@@ -281,11 +281,11 @@ class Component:
                     [x + half_x, y - half_y, z],  # right base
                     [x,          y + half_y, z],  # apex
                 ]
-                sketch, standalone_sketch = build123.protocol.build_sketch(
-                    tempt_canvas, new_point_list
+                sketch = build123.protocol.build_sketch(
+                    new_point_list
                 )
 
-                self.save_single_sketch(standalone_sketch)
+                self.save_single_sketch(sketch)
 
             elif op_name == "extrude":
                 self.ops.append("extrude")
