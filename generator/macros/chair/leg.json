@@ -4,8 +4,6 @@
   "parent": "root",
   "variants": [
 
-
-
     {
   "name": "single_cylindrical_leg",
   "boolean" : "addition",
@@ -66,14 +64,13 @@
     },
 
 
-
    {
       "name": "four_rectangle_leg",
         "boolean" : "addition",
       "parameters": {
-        "x_length": [0.1, 0.5],
-        "y_length": [0.1, 0.5],
-        "z_length": [3, 6]
+        "x_length": [0.25, 0.5],
+        "y_length": [0.25, 0.5],
+        "z_length": [2, 5]
       },
       "quantity": 4,
       "locations": [
@@ -100,7 +97,15 @@
       ],
       "cad_operations": [
         { "name": "sketch_rectangle" },
-        { "name": "extrude" }
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.08, 0.15]",
+            "edges": [5,10,6,11]
+          }
+        }
       ]
     }
 

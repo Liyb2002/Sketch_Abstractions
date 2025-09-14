@@ -1,7 +1,7 @@
 {
   "name": "backrest",
   "boolean" : "addition",
-  "children" : ["backrest_body", "backrest_hole"],
+  "children" : ["backrest_body", "backrest_hole", "backrest_head_rest"],
   "parent": "root",
   "variants": [
     {
@@ -9,7 +9,7 @@
       "boolean" : "addition",
       "parameters": {
         "x_length": "parent x_length",
-        "y_length": [0.15, 1],
+        "y_length": [0.4, 1],
         "z_length": [3, 5]
       },
       "cad_operations": [],

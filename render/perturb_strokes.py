@@ -828,15 +828,13 @@ def vis_labeled_strokes(perturbed_feature_lines,
 
 
 
-def vis_Op_to_strokes(
-    perturbed_feature_lines,
+def vis_Op_to_strokes(perturbed_feature_lines,
     perturbed_construction_lines,
     cuts,          # list[int] like [0, 5, 12, ...]
     op_id,         # which slice to highlight (0..len(cuts)-2)
     ops,           # print ops[op_id]
     linewidth=1.5, # drawing width for selected; ctx width scaled below
-    show=True
-):
+    show=True):
     """
     Visualize:
       - Feature lines: selected slice (cuts & op_id) in RED; all other feature lines in BLACK.

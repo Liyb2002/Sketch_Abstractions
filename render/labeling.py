@@ -220,7 +220,7 @@ def op_to_stroke(step_path):
 # ===========================
 # Utilities
 # ===========================
-def visualize_tree_values(tree, value_map):
+def visualize_tree_decomposition(tree, value_map):
     """
     Visualize ONLY non-leaf nodes.
     For a node with K children, call vis_labeled_strokes K times (label_id = 0..K-1).
@@ -257,7 +257,30 @@ def visualize_tree_values(tree, value_map):
 
     # Recurse into children
     for child in children:
-        visualize_tree_values(child, value_map)
+        visualize_tree_decomposition(child, value_map)
+
+
+def vis_components(tree, value_map):
+    """
+    For every node (leaf or non-leaf), if we have its data in value_map,
+    call perturb_strokes.vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines).
+    Then recurse into children.
+    """
+    name = tree["name"]
+    children = tree.get("children", [])
+
+    data = value_map.get(name)
+    if data is not None:
+        perturbed_feature_lines = data.get("perturbed_features", [])
+        perturbed_construction_lines = data.get("perturbed_constructions", [])
+        perturb_strokes.vis_perturbed_strokes(
+            perturbed_feature_lines,
+            perturbed_construction_lines,
+        )
+
+    # Recurse into children regardless
+    for child in children:
+        vis_components(child, value_map)
 
 
 # ===========================
@@ -280,7 +303,9 @@ if __name__ == "__main__":
 
         # 3) Compute values for all nodes
         value_map: Dict[str, NumberOrArray] = {}
-        _ = compute_tree_values(trees[1], label_dir, value_map=value_map)
+        _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
         # 4) Visualize every non-leaf node
-        visualize_tree_values(trees[1], value_map)
+        # visualize_tree_decomposition(tree, value_map)
+        vis_components(tree, value_map)
+

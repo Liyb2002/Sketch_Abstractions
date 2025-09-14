@@ -1,0 +1,127 @@
+{
+  "name": "backrest_head_rest",
+  "children" : [],
+  "variants": [
+  {
+      "name": "single_backrest_head_rest",
+      "boolean" : "addition",
+      "parameters": {
+        "x_length": "parent x_length * [0.2, 0.4] ",
+        "y_length": "parent y_length * [0.8, 1.2] " ,
+        "z_length": "parent z_length * [0.2, 0.4] "
+      },
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        },
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.2, 0.3]",
+            "edges": [0, 1]
+          }
+        },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.1, 0.2]",
+            "edges": [3]
+          }
+        }
+      ]
+    },
+
+
+
+
+      {
+      "name": "two_backrest_head_rest",
+      "boolean" : "addition",
+        "quantity": 4,
+      "parameters": {
+        "x_length": "parent x_length * [0.2, 0.4] ",
+        "y_length": "parent y_length * [0.8, 1.2] " ,
+        "z_length": "parent z_length * [0.2, 0.4] "
+      },
+      "locations":[ {
+         "x_location": "-parent x_length / 3", 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        },
+        {
+         "x_location": "parent x_length / 3", 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        }
+        ],
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.2, 0.3]",
+            "edges": [0, 1]
+          }
+        },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.1, 0.2]",
+            "edges": [3]
+          }
+        }
+      ]
+    },
+
+
+
+
+      {
+      "name": "four_backrest_head_rest",
+      "boolean" : "addition",
+        "quantity": 4,
+      "parameters": {
+        "x_length": "parent x_length * [0.1, 0.15] ",
+        "y_length": "parent y_length * [0.8, 1.2] " ,
+        "z_length": "parent z_length * [0.2, 0.4] "
+      },
+      "locations":[ {
+         "x_location": "-parent x_length / 6", 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        },
+        {
+         "x_location": "-parent x_length / 3", 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        },
+        {
+         "x_location": "parent x_length / 3", 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        }
+        ,
+        {
+         "x_location": "parent x_length / 6", 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        }
+        ],
+      "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+      ]
+    }
+
+     
+  ]
+}

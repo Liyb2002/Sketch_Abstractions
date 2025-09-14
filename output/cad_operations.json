@@ -3,7 +3,7 @@
     "0-0": [
         "sketch",
         "extrude",
-        "fillet"
+        "chamfer"
     ],
     "0-1": [],
     "0-1-0": [
@@ -15,39 +15,35 @@
         "sketch",
         "extrude"
     ],
-    "0-2": [],
-    "0-2-0": [
+    "0-1-2": [
         "sketch",
-        "extrude"
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "pattern"
     ],
-    "0-2-1": [
+    "0-2": [
         "sketch",
-        "extrude"
+        "extrude",
+        "fillet",
+        "sketch",
+        "extrude",
+        "fillet",
+        "sketch",
+        "extrude",
+        "fillet",
+        "sketch",
+        "extrude",
+        "fillet",
+        "pattern"
     ],
     "0-3": [
         "sketch",
         "sweep",
         "mirror"
-    ],
-    "1": [],
-    "1-0": [
-        "sketch",
-        "extrude"
-    ],
-    "1-1": [],
-    "1-1-0": [
-        "sketch",
-        "extrude"
-    ],
-    "1-1-1": [
-        "pattern"
-    ],
-    "1-2": [],
-    "1-2-0": [
-        "sketch",
-        "extrude"
-    ],
-    "1-2-1": [
-        "pattern"
     ]
 }

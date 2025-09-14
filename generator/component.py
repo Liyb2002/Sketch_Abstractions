@@ -39,6 +39,8 @@ class Component:
         self.labels = labels
         self.process_count = 0
 
+        self.random_seed = random.random()
+
     def param_init(self):
         """
         Initialize chosen parameters and absolute locations.
@@ -240,7 +242,7 @@ class Component:
                 sketch = build123.protocol.build_sketch(
                     new_point_list
                 )
-                self.save_single_sketch(standalone_sketch)
+                self.save_single_sketch(sketch)
 
             elif op_name == "sketch_circle":
                 self.ops.append("sketch")
@@ -312,7 +314,7 @@ class Component:
 
                 edges_in_canvas = tempt_canvas.edges()
 
-                if random.random() > 0.5:
+                if self.random_seed > 0.5:
                     self.ops.append("fillet")
                     for edge_idx in edge_indices:
                         target_edge = edges_in_canvas[edge_idx]
