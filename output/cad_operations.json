@@ -3,13 +3,14 @@
     "0-0": [
         "sketch",
         "extrude",
-        "chamfer"
+        "fillet"
     ],
     "0-1": [],
     "0-1-0": [
         "sketch",
         "extrude",
-        "fillet"
+        "chamfer",
+        "chamfer"
     ],
     "0-1-1": [
         "sketch",
@@ -18,13 +19,8 @@
     "0-1-2": [
         "sketch",
         "extrude",
-        "sketch",
-        "extrude",
-        "sketch",
-        "extrude",
-        "sketch",
-        "extrude",
-        "pattern"
+        "fillet",
+        "fillet"
     ],
     "0-2": [
         "sketch",

@@ -22,7 +22,7 @@
           "name": "fillet_or_chamfer",
           "probability": 1.0,
           "sub_parameters": {
-            "radius": "[0.2, 0.3]",
+            "radius": "[0.08, 0.15]",
             "edges": [0, 1]
           }
         },
@@ -30,7 +30,7 @@
           "name": "fillet_or_chamfer",
           "probability": 1.0,
           "sub_parameters": {
-            "radius": "[0.1, 0.2]",
+            "radius": "[0.08, 0.15]",
             "edges": [3]
           }
         }
@@ -41,13 +41,13 @@
 
 
       {
-      "name": "two_backrest_head_rest",
+      "name": "three_backrest_head_rest",
       "boolean" : "addition",
-        "quantity": 4,
+        "quantity": 3,
       "parameters": {
-        "x_length": "parent x_length * [0.2, 0.4] ",
+        "x_length": "parent x_length * [0.1, 0.3] ",
         "y_length": "parent y_length * [0.8, 1.2] " ,
-        "z_length": "parent z_length * [0.2, 0.4] "
+        "z_length": "parent z_length * [0.1, 0.3] "
       },
       "locations":[ {
          "x_location": "-parent x_length / 3", 
@@ -59,6 +59,12 @@
          "y_location": 0, 
          "z_location": "parent z_length"
         }
+        ,
+        {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        }
         ],
       "cad_operations": [
         { "name": "sketch_rectangle" },
@@ -67,18 +73,11 @@
           "name": "fillet_or_chamfer",
           "probability": 1.0,
           "sub_parameters": {
-            "radius": "[0.2, 0.3]",
-            "edges": [0, 1]
-          }
-        },
-        {
-          "name": "fillet_or_chamfer",
-          "probability": 1.0,
-          "sub_parameters": {
-            "radius": "[0.1, 0.2]",
-            "edges": [3]
+            "radius": "[0.08, 0.15]",
+            "edges": [0, 1, 3]
           }
         }
+        
       ]
     },
 

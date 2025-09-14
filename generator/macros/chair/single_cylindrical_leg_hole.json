@@ -1,0 +1,86 @@
+{
+  "name": "single_cylindrical_leg_hole",
+  "children" : [],
+  "parent": "leg_body",
+  "variants": [
+
+
+
+    {
+  "name": "three_cylindrical_leg_hole",
+  "boolean" : "subtraction",
+  "condition" : "single_cylindrical_leg",
+  "parameters": {
+    "x_length": "parent x_length * [0.15, 0.3]",
+    "y_length": "parent y_length * [1.0, 1.2]",
+    "z_length": "parent z_length * [0.1, 0.2]",
+    "normal": ["-z"]
+  },
+  "quantity": 3,
+      "locations": [{
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /4"
+        },
+        {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /2"
+        },
+        {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /2 - parent z_length /4"
+        }
+
+    ],
+  "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" }
+  ]
+},
+
+
+
+ {
+  "name": "four_cylindrical_leg_hole",
+  "boolean" : "subtraction",
+  "condition" : "single_cylindrical_leg",
+  "parameters": {
+    "x_length": "parent x_length * [0.08, 0.15]",
+    "y_length": "parent y_length * [1.0, 1.2]",
+    "z_length": "parent z_length * [0.05, 0.08]",
+    "normal": ["-z"]
+  },
+  "quantity": 4,
+      "locations": [{
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /6"
+        },
+        {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /3"
+        },
+        {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /2"
+        }
+        ,
+        {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "-parent z_length /2 -parent z_length /6"
+        }
+
+    ],
+  "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" }
+  ]
+}
+  ]
+
+}

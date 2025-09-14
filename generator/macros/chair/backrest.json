@@ -9,7 +9,7 @@
       "boolean" : "addition",
       "parameters": {
         "x_length": "parent x_length",
-        "y_length": [0.4, 1],
+        "y_length": [0.6, 1.2],
         "z_length": [3, 5]
       },
       "cad_operations": [],

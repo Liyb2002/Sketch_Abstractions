@@ -21,10 +21,10 @@
         { "name": "extrude" },
         {
           "name": "fillet_or_chamfer",
-          "probability": 0.8,
+          "probability": 1.0,
           "sub_parameters": {
             "radius": "[0.1, 0.2]",
-            "edges": [3]
+            "edges": [3, 10, 5]
           }
         }
       ]
