@@ -262,7 +262,7 @@ def op_to_stroke(step_path):
     # Collect related step files in history
     step_files = [
         p.name for p in history_dir.glob(f"{stem}*.step")
-        if "(detail)" not in p.name  # ignore "detail" files
+        # if "(detail)" not in p.name  # ignore "detail" files
     ]
 
     # Sort by the last (...) number
