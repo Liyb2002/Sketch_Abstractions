@@ -26,7 +26,8 @@ def load_component(json_path, output_path, parent=None, labels = [0]):
             'locations': variant.get("locations"),
             'condition': variant.get('condition', 'None'),
             'path' : variant.get('path', []),
-            'mating_reference' : variant.get('mating_reference', None)
+            'mating_reference' : variant.get('mating_reference', None),
+            'detail_type' : variant.get('detail_type', 'overview')
         }
     else:
         data = {
@@ -36,7 +37,8 @@ def load_component(json_path, output_path, parent=None, labels = [0]):
             'location': comp_dict.get('location'),
             'cad_operations': comp_dict['cad_operations'],
             'quantity': comp_dict.get("quantity", 1),
-            'locations': comp_dict.get("locations")
+            'locations': comp_dict.get("locations"),
+            'detail_type' : variant.get('detail_type', 'overview')
         }
 
     c = component.Component(data, parent=parent, labels = labels, output_path = output_path)

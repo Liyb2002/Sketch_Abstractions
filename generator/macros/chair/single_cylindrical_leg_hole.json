@@ -2,6 +2,7 @@
   "name": "single_cylindrical_leg_hole",
   "children" : [],
   "parent": "leg_body",
+  "detail_type": "detail",
   "variants": [
 
 

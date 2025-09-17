@@ -1,6 +1,7 @@
 {
   "name": "root",
   "boolean" : "addition",
+  "detail_type": "overview",
   "children" : [],
   "variants": [
     {

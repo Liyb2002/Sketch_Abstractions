@@ -1,6 +1,7 @@
 {
   "name": "backrest_hole",
   "children" : [],
+  "detail_type": "detail",
   "variants": [
   {
       "name": "backrest_hole_square",

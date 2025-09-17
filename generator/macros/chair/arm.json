@@ -1,6 +1,7 @@
 {
   "name": "arm",
   "children" : [],
+  "detail_type": "overview",
   "variants": [
     {
       "name": "arm",

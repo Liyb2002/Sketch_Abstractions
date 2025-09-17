@@ -1,6 +1,7 @@
 {
   "name": "backrest_head_rest",
   "children" : [],
+  "detail_type": "overview",
   "variants": [
   {
       "name": "single_backrest_head_rest",

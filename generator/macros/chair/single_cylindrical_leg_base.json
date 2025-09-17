@@ -2,6 +2,7 @@
   "name": "single_cylindrical_leg_base",
   "children" : [],
   "parent": "leg_body",
+  "detail_type": "overview",
   "variants": [
 
 
@@ -12,7 +13,7 @@
   "boolean" : "subtraction",
   "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "parent x_length * [0.15, 0.2]",
+    "x_length": "parent x_length * [1.5, 2.5]",
     "y_length": "parent y_length",
     "z_length": "parent z_length * [0.3, 0.3]",
     "normal": ["-z"]
@@ -39,7 +40,7 @@
   "boolean" : "addition",
   "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "parent x_length * [0.6, 0.8]",
+    "x_length": "parent x_length * [1.5, 2.5]",
     "y_length": "parent y_length * [1.2, 1.5]",
     "z_length": "parent z_length * [0.2, 0.4]",
     "normal": ["-z"]
@@ -62,7 +63,7 @@
   "boolean" : "addition",
   "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "parent x_length * [0.5, 0.9]",
+    "x_length": "parent x_length * [1.2, 2.0]",
     "y_length": "parent y_length * [0.6, 0.9]",
     "z_length": "parent z_length * [0.2, 0.4]",
     "normal": ["-z"]
@@ -85,7 +86,7 @@
   "boolean" : "addition",
   "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "parent x_length * [0.5, 0.9]",
+    "x_length": "parent x_length * [1.5, 2.0]",
     "y_length": "parent y_length * [0.6, 0.9]",
     "z_length": "parent z_length * [0.2, 0.4]",
     "normal": ["-z"]

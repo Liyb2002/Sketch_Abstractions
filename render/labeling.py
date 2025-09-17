@@ -141,6 +141,94 @@ def compute_tree_values(
     return result
 
 
+# ===========================
+# Computer Overview
+# ===========================
+
+
+def compute_overview(
+    node: Dict[str, Any],
+    label_dir: Path,
+    value_map: Dict[str, Any] = None,
+) -> Dict[str, Any]:
+    """
+    Overview pass:
+      - If `node` has NO children: compute this node's own lines (leaf).
+      - If `node` HAS children: TREAT AS ROOT for overview:
+          * For each immediate child: compute child's own lines via op_to_stroke(...) and
+            store them in value_map.
+          * Aggregate those child results into the root's result.
+      - Never recurse beyond one level (children never continue).
+    """
+    if value_map is None:
+        value_map = {}
+
+    name = node["name"]
+    children = node.get("children", [])
+
+    # ---- Leaf (no children): compute this node only ----
+    if not children:
+        step_path = label_dir / name
+        feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(step_path)
+        result = {
+            "features": feature_lines,
+            "perturbed_features": perturbed_feature_lines,
+            "perturbed_constructions": perturbed_construction_lines,
+            "cuts": {
+                "features": [0, len(feature_lines)],
+                "perturbed_features": [0, len(perturbed_feature_lines)],
+                "perturbed_constructions": [0, len(perturbed_construction_lines)],
+            },
+        }
+        value_map[name] = result
+        return result
+
+    # ---- Root (has children): compute each immediate child ONCE, no recursion ----
+    all_features, all_pfeatures, all_pconstructions = [], [], []
+    cuts_features, cuts_pfeatures, cuts_pconstructions = [0], [0], [0]
+
+    for child in children:
+        child_name = child["name"]
+        step_path = label_dir / child_name
+
+        c_feat, c_pfeat, c_pcon = op_to_stroke(step_path)
+
+        # store child's own result
+        child_result = {
+            "features": c_feat,
+            "perturbed_features": c_pfeat,
+            "perturbed_constructions": c_pcon,
+            "cuts": {
+                "features": [0, len(c_feat)],
+                "perturbed_features": [0, len(c_pfeat)],
+                "perturbed_constructions": [0, len(c_pcon)],
+            },
+        }
+        value_map[child_name] = child_result
+
+        # aggregate into root
+        all_features.extend(c_feat)
+        cuts_features.append(len(all_features))
+
+        all_pfeatures.extend(c_pfeat)
+        cuts_pfeatures.append(len(all_pfeatures))
+
+        all_pconstructions.extend(c_pcon)
+        cuts_pconstructions.append(len(all_pconstructions))
+
+    # root result is the concatenation of its children's results
+    result = {
+        "features": all_features,
+        "perturbed_features": all_pfeatures,
+        "perturbed_constructions": all_pconstructions,
+        "cuts": {
+            "features": cuts_features,
+            "perturbed_features": cuts_pfeatures,
+            "perturbed_constructions": cuts_pconstructions,
+        },
+    }
+    value_map[name] = result
+    return result
 
 
 # ===========================
@@ -283,6 +371,34 @@ def vis_components(tree, value_map):
         vis_components(child, value_map)
 
 
+
+def vis_components_overview(tree: Dict[str, Any], value_map: Dict[str, Any]):
+    """
+    Visualize the overview for root + its immediate children (whatever compute_overview filled).
+    No recursion; no computation.
+    """
+    root_name = tree["name"]
+
+    # root view (aggregation of children)
+    root_data = value_map.get(root_name)
+    if root_data is not None:
+        perturb_strokes.vis_perturbed_strokes(
+            root_data.get("perturbed_features", []),
+            root_data.get("perturbed_constructions", []),
+        )
+
+    # each immediate child view (its own .step only)
+    for child in tree.get("children", []):
+        c_name = child["name"]
+        c_data = value_map.get(c_name)
+        if c_data is None:
+            continue
+        perturb_strokes.vis_perturbed_strokes(
+            c_data.get("perturbed_features", []),
+            c_data.get("perturbed_constructions", []),
+        )
+
+
 # ===========================
 # Example usage
 # ===========================
@@ -307,5 +423,8 @@ if __name__ == "__main__":
 
         # 4) Visualize every non-leaf node
         # visualize_tree_decomposition(tree, value_map)
-        vis_components(tree, value_map)
+        # vis_components(tree, value_map)
 
+        value_map_overview = {}
+        _ = compute_overview(tree, label_dir, value_map=value_map_overview)  # call only on the root
+        vis_components_overview(tree, value_map_overview)

@@ -1,7 +1,8 @@
 {
   "name": "backrest",
   "boolean" : "addition",
-  "children" : ["backrest_body", "backrest_hole", "backrest_head_rest"],
+  "detail_type": "overview",
+  "children" : ["backrest_hole", "backrest_head_rest"],
   "parent": "root",
   "variants": [
     {
@@ -12,7 +13,18 @@
         "y_length": [0.6, 1.2],
         "z_length": [3, 5]
       },
-      "cad_operations": [],
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.08, 0.15]",
+            "edges": [0, 1]
+          }
+        }
+      ],
       "location": {
         "x_location": 0,
         "y_location": "parent y_length /2",
