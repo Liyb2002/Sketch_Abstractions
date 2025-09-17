@@ -2,12 +2,12 @@
   "name": "leg",
   "children" : ["single_cylindrical_leg_base", "single_cylindrical_leg_hole"],
   "parent": "root",
-  "detail_type": "overview",
   "variants": [
 
     {
   "name": "single_cylindrical_leg",
   "boolean" : "addition",
+  "detail_type": "overview",
   "parameters": {
     "x_length": "parent x_length * [0.3, 0.5]",
     "y_length": "parent y_length",

@@ -1,13 +1,13 @@
 {
   "name": "backrest",
   "boolean" : "addition",
-  "detail_type": "overview",
   "children" : ["backrest_hole", "backrest_head_rest"],
   "parent": "root",
   "variants": [
     {
       "name": "standard_backrest",
       "boolean" : "addition",
+      "detail_type": "overview",
       "parameters": {
         "x_length": "parent x_length",
         "y_length": [0.6, 1.2],

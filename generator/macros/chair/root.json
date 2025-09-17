@@ -1,7 +1,6 @@
 {
   "name": "simple_chair",
   "boolean" : "addition",
-  "detail_type": "overview",
   "children": [
     "seat",
     "backrest",
@@ -12,6 +11,7 @@
     {
       "name": "root",
       "boolean" : "addition",
+      "detail_type": "overview",
       "location": {
          "x_location": 0, 
          "y_location": 0, 

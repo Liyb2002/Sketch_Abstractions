@@ -1,0 +1,55 @@
+{
+    "0": [],
+    "0-0": [
+        "sketch",
+        "extrude",
+        "chamfer",
+        "chamfer",
+        "chamfer"
+    ],
+    "0-1": [
+        "sketch",
+        "extrude",
+        "chamfer",
+        "chamfer"
+    ],
+    "0-1-0": [
+        "sketch",
+        "extrude"
+    ],
+    "0-1-1": [
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "pattern"
+    ],
+    "0-2": [
+        "sketch",
+        "extrude"
+    ],
+    "0-2-0": [
+        "sketch",
+        "extrude"
+    ],
+    "0-2-1": [
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "pattern"
+    ],
+    "0-3": [
+        "sketch",
+        "sweep",
+        "mirror"
+    ]
+}

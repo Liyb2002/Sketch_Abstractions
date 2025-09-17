@@ -1,11 +1,11 @@
 {
   "name": "arm",
   "children" : [],
-  "detail_type": "overview",
   "variants": [
     {
       "name": "arm",
       "boolean" : "addition",
+      "detail_type": "overview",
       "parameters": {
         "x_length": "parent x_length * [0.04, 0.06]",
         "y_length": "parent y_length",

@@ -386,8 +386,8 @@ class Component:
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
-        tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).stl"
-        tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).step"
+        tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.detail_type})({self.process_count}).stl"
+        tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.detail_type})({self.process_count}).step"
         if tempt_canvas is not None:
             self.process_count += 1
 
@@ -398,8 +398,8 @@ class Component:
         output_dir = self.output_folder / "history"
         output_dir.mkdir(exist_ok=True)
 
-        tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).stl"
-        tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.process_count}).step"
+        tmp_stl = output_dir / f"{helper.convert_labels(self.labels)}({self.detail_type})({self.process_count}).stl"
+        tmp_step = output_dir / f"{helper.convert_labels(self.labels)}({self.detail_type})({self.process_count}).step"
         if standalone_sketch is not None :
             self.process_count += 1
 
@@ -488,8 +488,8 @@ class Component:
             output_dir = self.output_folder / "seperable"
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            tmp_stl = output_dir / f"{file_name}_{self.detail_type}.stl"
-            tmp_step = output_dir / f"{file_name}_{self.detail_type}.step"
+            tmp_stl = output_dir / f"{file_name}.stl"
+            tmp_step = output_dir / f"{file_name}.step"
 
             helper.func_export_stl(tempt_canvas, str(tmp_stl))
             helper.func_export_step(tempt_canvas, str(tmp_step))

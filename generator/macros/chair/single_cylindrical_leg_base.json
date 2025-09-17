@@ -2,7 +2,6 @@
   "name": "single_cylindrical_leg_base",
   "children" : [],
   "parent": "leg_body",
-  "detail_type": "overview",
   "variants": [
 
 
@@ -11,6 +10,7 @@
     {
   "name": "leg_hole_mating",
   "boolean" : "subtraction",
+  "detail_type": "overview",
   "condition" : "single_cylindrical_leg",
   "parameters": {
     "x_length": "parent x_length * [1.5, 2.5]",
@@ -38,6 +38,7 @@
     {
   "name": "single_cylindrical_leg_base",
   "boolean" : "addition",
+  "detail_type": "overview",
   "condition" : "single_cylindrical_leg",
   "parameters": {
     "x_length": "parent x_length * [1.5, 2.5]",
@@ -61,6 +62,7 @@
   {
   "name": "single_triangle_leg_base",
   "boolean" : "addition",
+  "detail_type": "overview",
   "condition" : "single_cylindrical_leg",
   "parameters": {
     "x_length": "parent x_length * [1.2, 2.0]",
@@ -84,6 +86,7 @@
 {
   "name": "single_square_leg_base",
   "boolean" : "addition",
+  "detail_type": "overview",
   "condition" : "single_cylindrical_leg",
   "parameters": {
     "x_length": "parent x_length * [1.5, 2.0]",

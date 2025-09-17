@@ -2,7 +2,6 @@
   "name": "single_cylindrical_leg_hole",
   "children" : [],
   "parent": "leg_body",
-  "detail_type": "detail",
   "variants": [
 
 
@@ -10,6 +9,7 @@
     {
   "name": "three_cylindrical_leg_hole",
   "boolean" : "subtraction",
+  "detail_type": "detail",
   "condition" : "single_cylindrical_leg",
   "parameters": {
     "x_length": "parent x_length * [0.15, 0.3]",
@@ -46,6 +46,7 @@
  {
   "name": "four_cylindrical_leg_hole",
   "boolean" : "subtraction",
+  "detail_type": "detail",
   "condition" : "single_cylindrical_leg",
   "parameters": {
     "x_length": "parent x_length * [0.08, 0.15]",

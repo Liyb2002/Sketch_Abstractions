@@ -89,12 +89,13 @@ def compute_tree_values(
 
     name = node["name"]
     children = node.get("children", [])
+    step_path = label_dir / name
+
+    # Compute this node's own values (for both leaf and internal)
+    feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(step_path)
 
     # ---- Leaf ----
     if not children:
-        step_path = label_dir / name
-        feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(step_path)
-
         result = {
             "features": feature_lines,
             "perturbed_features": perturbed_feature_lines,
@@ -109,21 +110,25 @@ def compute_tree_values(
         return result
 
     # ---- Internal node ----
-    all_features, all_pfeatures, all_pconstructions = [], [], []
-    cuts_features, cuts_pfeatures, cuts_pconstructions = [0], [0], [0]
+    # start with this node's own contribution
+    all_features = list(feature_lines)
+    all_pfeatures = list(perturbed_feature_lines)
+    all_pconstructions = list(perturbed_construction_lines)
 
+    cuts_features = [0, len(all_features)]
+    cuts_pfeatures = [0, len(all_pfeatures)]
+    cuts_pconstructions = [0, len(all_pconstructions)]
+
+    # then append each child's contribution
     for child in children:
         child_res = compute_tree_values(child, label_dir, value_map=value_map)
 
-        # extend features
         all_features.extend(child_res["features"])
         cuts_features.append(len(all_features))
 
-        # extend perturbed features
         all_pfeatures.extend(child_res["perturbed_features"])
         cuts_pfeatures.append(len(all_pfeatures))
 
-        # extend perturbed constructions
         all_pconstructions.extend(child_res["perturbed_constructions"])
         cuts_pconstructions.append(len(all_pconstructions))
 
@@ -255,9 +260,16 @@ def op_to_stroke(step_path):
     ops = operations_map.get(stem, [])
 
     # Collect related step files in history
-    step_files = [p.name for p in history_dir.glob(f"{stem}(*).step")]
-    step_files = sorted(step_files,
-        key=lambda f: int(re.search(r"\((\d+)\)", f).group(1)))
+    step_files = [
+        p.name for p in history_dir.glob(f"{stem}*.step")
+        # if "(detail)" not in p.name  # ignore "detail" files
+    ]
+
+    # Sort by the last (...) number
+    step_files = sorted(
+        step_files,
+        key=lambda f: int(re.findall(r"\((\d+)\)", f)[-1])  # take last number
+    )
 
 
     #2)Features Accumulation 
@@ -422,9 +434,6 @@ if __name__ == "__main__":
         _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
         # 4) Visualize every non-leaf node
-        # visualize_tree_decomposition(tree, value_map)
+        visualize_tree_decomposition(tree, value_map)
         # vis_components(tree, value_map)
 
-        value_map_overview = {}
-        _ = compute_overview(tree, label_dir, value_map=value_map_overview)  # call only on the root
-        vis_components_overview(tree, value_map_overview)

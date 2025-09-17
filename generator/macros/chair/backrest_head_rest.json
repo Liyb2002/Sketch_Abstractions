@@ -1,11 +1,11 @@
 {
   "name": "backrest_head_rest",
   "children" : [],
-  "detail_type": "overview",
   "variants": [
   {
       "name": "single_backrest_head_rest",
       "boolean" : "addition",
+       "detail_type": "overview",
       "parameters": {
         "x_length": "parent x_length * [0.2, 0.4] ",
         "y_length": "parent y_length * [0.8, 1.2] " ,
@@ -44,6 +44,7 @@
       {
       "name": "three_backrest_head_rest",
       "boolean" : "addition",
+       "detail_type": "overview",
         "quantity": 3,
       "parameters": {
         "x_length": "parent x_length * [0.1, 0.3] ",
@@ -88,6 +89,7 @@
       {
       "name": "four_backrest_head_rest",
       "boolean" : "addition",
+       "detail_type": "overview",
         "quantity": 4,
       "parameters": {
         "x_length": "parent x_length * [0.1, 0.15] ",
