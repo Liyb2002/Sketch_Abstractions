@@ -83,6 +83,7 @@ def compute_tree_values(
     node: Dict[str, Any],
     label_dir: Path,
     value_map: Dict[str, Any] = None,
+    is_overview: bool = False,
 ) -> Dict[str, Any]:
     if value_map is None:
         value_map = {}
@@ -91,8 +92,10 @@ def compute_tree_values(
     children = node.get("children", [])
     step_path = label_dir / name
 
-    # Compute this node's own values (for both leaf and internal)
-    feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(step_path)
+    # Pass is_overview flag into op_to_stroke
+    feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(
+        step_path, is_overview=is_overview
+    )
 
     # ---- Leaf ----
     if not children:
@@ -110,7 +113,6 @@ def compute_tree_values(
         return result
 
     # ---- Internal node ----
-    # start with this node's own contribution
     all_features = list(feature_lines)
     all_pfeatures = list(perturbed_feature_lines)
     all_pconstructions = list(perturbed_construction_lines)
@@ -124,9 +126,8 @@ def compute_tree_values(
         cuts_pfeatures = [0, len(all_pfeatures)]
         cuts_pconstructions = [0, len(all_pconstructions)]
 
-    # then append each child's contribution
     for child in children:
-        child_res = compute_tree_values(child, label_dir, value_map=value_map)
+        child_res = compute_tree_values(child, label_dir, value_map=value_map, is_overview=is_overview)
 
         all_features.extend(child_res["features"])
         cuts_features.append(len(all_features))
@@ -151,94 +152,6 @@ def compute_tree_values(
     return result
 
 
-# ===========================
-# Computer Overview
-# ===========================
-
-
-def compute_overview(
-    node: Dict[str, Any],
-    label_dir: Path,
-    value_map: Dict[str, Any] = None,
-) -> Dict[str, Any]:
-    """
-    Overview pass:
-      - If `node` has NO children: compute this node's own lines (leaf).
-      - If `node` HAS children: TREAT AS ROOT for overview:
-          * For each immediate child: compute child's own lines via op_to_stroke(...) and
-            store them in value_map.
-          * Aggregate those child results into the root's result.
-      - Never recurse beyond one level (children never continue).
-    """
-    if value_map is None:
-        value_map = {}
-
-    name = node["name"]
-    children = node.get("children", [])
-
-    # ---- Leaf (no children): compute this node only ----
-    if not children:
-        step_path = label_dir / name
-        feature_lines, perturbed_feature_lines, perturbed_construction_lines = op_to_stroke(step_path)
-        result = {
-            "features": feature_lines,
-            "perturbed_features": perturbed_feature_lines,
-            "perturbed_constructions": perturbed_construction_lines,
-            "cuts": {
-                "features": [0, len(feature_lines)],
-                "perturbed_features": [0, len(perturbed_feature_lines)],
-                "perturbed_constructions": [0, len(perturbed_construction_lines)],
-            },
-        }
-        value_map[name] = result
-        return result
-
-    # ---- Root (has children): compute each immediate child ONCE, no recursion ----
-    all_features, all_pfeatures, all_pconstructions = [], [], []
-    cuts_features, cuts_pfeatures, cuts_pconstructions = [0], [0], [0]
-
-    for child in children:
-        child_name = child["name"]
-        step_path = label_dir / child_name
-
-        c_feat, c_pfeat, c_pcon = op_to_stroke(step_path)
-
-        # store child's own result
-        child_result = {
-            "features": c_feat,
-            "perturbed_features": c_pfeat,
-            "perturbed_constructions": c_pcon,
-            "cuts": {
-                "features": [0, len(c_feat)],
-                "perturbed_features": [0, len(c_pfeat)],
-                "perturbed_constructions": [0, len(c_pcon)],
-            },
-        }
-        value_map[child_name] = child_result
-
-        # aggregate into root
-        all_features.extend(c_feat)
-        cuts_features.append(len(all_features))
-
-        all_pfeatures.extend(c_pfeat)
-        cuts_pfeatures.append(len(all_pfeatures))
-
-        all_pconstructions.extend(c_pcon)
-        cuts_pconstructions.append(len(all_pconstructions))
-
-    # root result is the concatenation of its children's results
-    result = {
-        "features": all_features,
-        "perturbed_features": all_pfeatures,
-        "perturbed_constructions": all_pconstructions,
-        "cuts": {
-            "features": cuts_features,
-            "perturbed_features": cuts_pfeatures,
-            "perturbed_constructions": cuts_pconstructions,
-        },
-    }
-    value_map[name] = result
-    return result
 
 
 # ===========================
@@ -249,7 +162,7 @@ def _load_operations_map(json_path: Path):
         return json.load(f)
 
 
-def op_to_stroke(step_path):
+def op_to_stroke(step_path, is_overview = False):
     #1)Path Preparation
     ops_path = current_folder / "output" / "cad_operations.json"
     operations_map = _load_operations_map(ops_path)
@@ -264,7 +177,13 @@ def op_to_stroke(step_path):
     ops = operations_map.get(stem, [])
 
     # Collect related step files in history
-    pattern = re.compile(rf"^{re.escape(stem)}\((overview)\)\((\d+)\)\.step$")
+    if is_overview:
+        pattern = re.compile(rf"^{re.escape(stem)}\(overview\)\((\d+)\)\.step$")
+        group_idx = 1
+    else:
+        pattern = re.compile(rf"^{re.escape(stem)}\((overview|detail)\)\((\d+)\)\.step$")
+        group_idx = 2
+
 
     # Keep Path objects; filter by exact filename pattern
     candidates = []
@@ -272,8 +191,7 @@ def op_to_stroke(step_path):
         if p.is_file():
             m = pattern.match(p.name)
             if m:
-                # capture the index from the second group
-                idx = int(m.group(2))
+                idx = int(m.group(group_idx))
                 candidates.append((idx, p))
 
     # Sort by the numeric index and extract the Paths
@@ -391,21 +309,24 @@ def vis_components(tree, value_map):
         vis_components(child, value_map)
 
 
-
-def vis_components_overview(tree: Dict[str, Any], value_map: Dict[str, Any]):
+def vis_overview_root(root: Dict[str, Any], value_map: Dict[str, Any]) -> None:
     """
-    Visualize the overview for root + its immediate children (whatever compute_overview filled).
-    No recursion; no computation.
+    Visualize only the root node's perturbed strokes (features + constructions).
+    No recursion, no labels, no cuts.
     """
-    root_name = tree["name"]
+    name = root["name"]
+    data = value_map.get(name)
+    if data is None:
+        print(f"[vis_overview_root] No data for {name}")
+        return
 
-    # root view (aggregation of children)
-    root_data = value_map.get(root_name)
-    if root_data is not None:
-        perturb_strokes.vis_perturbed_strokes(
-            root_data.get("perturbed_features", []),
-            root_data.get("perturbed_constructions", []),
-        )
+    perturbed_feature_lines = data.get("perturbed_features", [])
+    perturbed_construction_lines = data.get("perturbed_constructions", [])
+
+    perturb_strokes.vis_perturbed_strokes(
+        perturbed_feature_lines,
+        perturbed_construction_lines,
+    )
 
 
 
@@ -415,6 +336,7 @@ def vis_components_overview(tree: Dict[str, Any], value_map: Dict[str, Any]):
 if __name__ == "__main__":
     from pathlib import Path
     from typing import Dict
+    import copy
 
     # 1) Where your .step files live
     current_folder = Path.cwd().parent
@@ -427,11 +349,16 @@ if __name__ == "__main__":
         print("=" * 60)
         print(f"Processing tree rooted at {tree['name']}")
 
-        # 3) Compute values for all nodes
-        value_map: Dict[str, NumberOrArray] = {}
-        _ = compute_tree_values(tree, label_dir, value_map=value_map)
+        tree_overview = copy.deepcopy(tree)
+        # 3) Compute values for all nodes (recursive, normal mode)
+        # value_map: Dict[str, NumberOrArray] = {}
+        # _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
-        # 4) Visualize every non-leaf node
-        visualize_tree_decomposition(tree, value_map)
+        # 4) (Optional) Visualizations for the full pass
+        # visualize_tree_decomposition(tree, value_map)
         # vis_components(tree, value_map)
 
+        # 5) Overview-only pass: copy the tree + use a separate value_map
+        overview_value_map: Dict[str, NumberOrArray] = {}
+        _ = compute_tree_values(tree_overview, label_dir, value_map=overview_value_map, is_overview=True)
+        vis_overview_root(tree_overview, overview_value_map)
