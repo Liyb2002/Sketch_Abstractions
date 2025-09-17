@@ -9,24 +9,18 @@
       "parameters": {
         "x_length": "parent x_length  * [0.2, 0.8]",
         "y_length": "parent y_length * [1.01, 1.02] " ,
-        "z_length": "parent z_length  * [0.2, 0.8]"
+        "z_length": "parent z_length  * [0.2, 0.3]"
       },
       "location": {
          "x_location": 0, 
          "y_location": 0, 
          "z_location": 0.1
         },
+  
       "cad_operations": [
         { "name": "sketch_rectangle" },
-        { "name": "extrude" },
-        {
-          "name": "fillet_or_chamfer",
-          "probability": 1.0,
-          "sub_parameters": {
-            "radius": "[0.08, 0.15]",
-            "edges": [10, 5, 6, 11]
-          }
-        }
+        { "name": "extrude" }
+        
 
       ]
     }

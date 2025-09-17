@@ -13,7 +13,7 @@
   "detail_type": "overview",
   "condition" : "single_cylindrical_leg",
   "parameters": {
-    "x_length": "parent x_length * [1.5, 2.5]",
+    "x_length": "parent x_length * [0.1, 0.3]",
     "y_length": "parent y_length",
     "z_length": "parent z_length * [0.3, 0.3]",
     "normal": ["-z"]

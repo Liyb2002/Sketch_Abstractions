@@ -1,7 +1,7 @@
 {
   "name": "backrest",
   "boolean" : "addition",
-  "children" : ["backrest_hole", "backrest_headrest"],
+  "children" : ["backrest_hole", "backrest_headrest", "backrest_cut"],
   "parent": "root",
   "variants": [
     {

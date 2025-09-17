@@ -409,6 +409,15 @@ class Component:
 
     def parse_eval_list(self, path_list):
         coords = []
+
+        # Build a combined parameter map: self first, then parent (or vice versa if you prefer)
+        params = {}
+        if hasattr(self, "parent") and getattr(self.parent, "chosen_parameters", None):
+            params.update(self.parent.chosen_parameters)
+        if getattr(self, "chosen_parameters", None):
+            # If the same key exists in both, self overrides parent; flip the order if you want the opposite
+            params.update(self.chosen_parameters)
+
         for point in path_list:
             parsed_point = []
             for val in point:
@@ -423,9 +432,13 @@ class Component:
 
                 elif isinstance(val, str):
                     expr = val
-                    # Replace parent references
-                    for pk, pv in self.parent.chosen_parameters.items():
-                        expr = expr.replace(f"parent {pk}", str(pv))
+
+                    # Replace parameter references: both "parent <name>" and bare "<name>"
+                    # Use word boundaries so we don't replace substrings inside other identifiers.
+                    for pk, pv in params.items():
+                        name = re.escape(pk)
+                        expr = re.sub(rf"\bparent\s+{name}\b", str(pv), expr)
+                        expr = re.sub(rf"\b{name}\b", str(pv), expr)
 
                     # Replace inline [a,b] ranges with sampled numbers
                     def repl(m):
@@ -433,7 +446,11 @@ class Component:
                         if lo > hi: lo, hi = hi, lo
                         return str(random.uniform(lo, hi))
 
-                    expr = re.sub(r"\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]", repl, expr)
+                    expr = re.sub(
+                        r"\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]",
+                        repl,
+                        expr,
+                    )
 
                     try:
                         parsed_val = eval(expr, {"__builtins__": {}}, {})
@@ -443,6 +460,7 @@ class Component:
 
                 else:
                     raise ValueError(f"Unsupported value type in path: {val}")
+
             coords.append(parsed_point)
 
         return coords
