@@ -115,9 +115,14 @@ def compute_tree_values(
     all_pfeatures = list(perturbed_feature_lines)
     all_pconstructions = list(perturbed_construction_lines)
 
-    cuts_features = [0, len(all_features)]
-    cuts_pfeatures = [0, len(all_pfeatures)]
-    cuts_pconstructions = [0, len(all_pconstructions)]
+    if len(all_features) == 0:
+        cuts_features = [0]
+        cuts_pfeatures = [0]
+        cuts_pconstructions = [0]
+    else:
+        cuts_features = [0, len(all_features)]
+        cuts_pfeatures = [0, len(all_pfeatures)]
+        cuts_pconstructions = [0, len(all_pconstructions)]
 
     # then append each child's contribution
     for child in children:
@@ -245,7 +250,6 @@ def _load_operations_map(json_path: Path):
 
 
 def op_to_stroke(step_path):
-
     #1)Path Preparation
     ops_path = current_folder / "output" / "cad_operations.json"
     operations_map = _load_operations_map(ops_path)
@@ -260,16 +264,20 @@ def op_to_stroke(step_path):
     ops = operations_map.get(stem, [])
 
     # Collect related step files in history
-    step_files = [
-        p.name for p in history_dir.glob(f"{stem}*.step")
-        # if "(detail)" not in p.name  # ignore "detail" files
-    ]
+    pattern = re.compile(rf"^{re.escape(stem)}\((overview)\)\((\d+)\)\.step$")
 
-    # Sort by the last (...) number
-    step_files = sorted(
-        step_files,
-        key=lambda f: int(re.findall(r"\((\d+)\)", f)[-1])  # take last number
-    )
+    # Keep Path objects; filter by exact filename pattern
+    candidates = []
+    for p in history_dir.iterdir():
+        if p.is_file():
+            m = pattern.match(p.name)
+            if m:
+                # capture the index from the second group
+                idx = int(m.group(2))
+                candidates.append((idx, p))
+
+    # Sort by the numeric index and extract the Paths
+    step_files = [p for _, p in sorted(candidates, key=lambda t: t[0])]
 
 
     #2)Features Accumulation 
@@ -399,16 +407,6 @@ def vis_components_overview(tree: Dict[str, Any], value_map: Dict[str, Any]):
             root_data.get("perturbed_constructions", []),
         )
 
-    # each immediate child view (its own .step only)
-    for child in tree.get("children", []):
-        c_name = child["name"]
-        c_data = value_map.get(c_name)
-        if c_data is None:
-            continue
-        perturb_strokes.vis_perturbed_strokes(
-            c_data.get("perturbed_features", []),
-            c_data.get("perturbed_constructions", []),
-        )
 
 
 # ===========================
