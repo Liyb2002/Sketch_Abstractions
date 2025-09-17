@@ -61,26 +61,5 @@
         "sketch",
         "sweep",
         "mirror"
-    ],
-    "1": [],
-    "1-0": [
-        "sketch",
-        "extrude"
-    ],
-    "1-1": [],
-    "1-1-0": [
-        "sketch",
-        "extrude"
-    ],
-    "1-1-1": [
-        "pattern"
-    ],
-    "1-2": [],
-    "1-2-0": [
-        "sketch",
-        "extrude"
-    ],
-    "1-2-1": [
-        "pattern"
     ]
 }
