@@ -316,12 +316,13 @@ class Component:
                 edges_in_canvas = tempt_canvas.edges()
 
                 if self.random_seed > 0.5:
-                    self.ops.append("fillet")
                     for edge_idx in edge_indices:
+                        self.ops.append("fillet")
                         target_edge = edges_in_canvas[edge_idx]
                         tempt_canvas = build123.protocol.build_fillet(
                             tempt_canvas, target_edge, radius
                         )
+                        self.save_process(tempt_canvas, self.main_canvas)
                 else:
                     for edge_idx in edge_indices:
                         self.ops.append("chamfer")
@@ -329,8 +330,7 @@ class Component:
                         tempt_canvas = build123.protocol.build_chamfer(
                             tempt_canvas, target_edge, radius
                         )
-                
-                self.save_process(tempt_canvas, self.main_canvas)
+                        self.save_process(tempt_canvas, self.main_canvas)
 
             elif op_name == "sweep":
                 self.ops.append("sweep")

@@ -197,15 +197,18 @@ def op_to_stroke(step_path, is_overview = False):
     # Sort by the numeric index and extract the Paths
     step_files = [p for _, p in sorted(candidates, key=lambda t: t[0])]
 
-
     #2)Features Accumulation 
     edge_features_list = []
     cylinder_features_list = []
     feature_lines = []
     cut_off = []
 
-    for step_file in step_files:
-        file_path = history_dir / step_file
+    overview_targets = {"sketch", "extrude", "sweep", "mirror"}
+
+    for i, step_file in enumerate(step_files):
+        # step_file is already an absolute Path inside history_dir
+        file_path = step_file
+
         tmpt_edge_features_list, tmpt_cylinder_features_list = brep_read.sample_strokes_from_step_file(
             str(file_path)
         )
@@ -215,15 +218,24 @@ def op_to_stroke(step_path, is_overview = False):
             edge_features_list,
             cylinder_features_list,
             tmpt_edge_features_list,
-            tmpt_cylinder_features_list)
-        
+            tmpt_cylinder_features_list,
+        )
+
         edge_features_list += new_edge_features
         cylinder_features_list += new_cylinder_features
-        feature_lines += new_edge_features
-        feature_lines += new_cylinder_features
 
-        cut_off.append(len(feature_lines))
-    
+        # Decide whether to expose these features as "feature_lines"
+        if is_overview:
+            # ops is expected to have the same length as step_files, but be defensive
+            current_op = ops[i] if i < len(ops) else None
+            if current_op in overview_targets:
+                feature_lines += new_edge_features
+                feature_lines += new_cylinder_features
+                cut_off.append(len(feature_lines))
+        else:
+            feature_lines += new_edge_features
+            feature_lines += new_cylinder_features
+            cut_off.append(len(feature_lines))
 
 
     #3)Get the construction lines
@@ -351,8 +363,8 @@ if __name__ == "__main__":
 
         tree_overview = copy.deepcopy(tree)
         # 3) Compute values for all nodes (recursive, normal mode)
-        # value_map: Dict[str, NumberOrArray] = {}
-        # _ = compute_tree_values(tree, label_dir, value_map=value_map)
+        value_map: Dict[str, NumberOrArray] = {}
+        _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
         # 4) (Optional) Visualizations for the full pass
         # visualize_tree_decomposition(tree, value_map)
