@@ -367,7 +367,7 @@ if __name__ == "__main__":
         _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
         # 4) (Optional) Visualizations for the full pass
-        # visualize_tree_decomposition(tree, value_map)
+        visualize_tree_decomposition(tree, value_map)
         # vis_components(tree, value_map)
 
         # 5) Overview-only pass: copy the tree + use a separate value_map

@@ -24,35 +24,34 @@
     "0-1-1": [
         "sketch",
         "extrude",
-        "chamfer",
-        "chamfer",
-        "chamfer"
+        "fillet",
+        "fillet",
+        "fillet"
+    ],
+    "0-1-1-0": [
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "sketch",
+        "extrude",
+        "pattern"
     ],
     "0-2": [
         "sketch",
-        "extrude",
-        "chamfer",
-        "chamfer",
-        "chamfer",
-        "chamfer",
+        "extrude"
+    ],
+    "0-2-0": [
+        "sketch",
+        "extrude"
+    ],
+    "0-2-1": [
         "sketch",
         "extrude",
-        "chamfer",
-        "chamfer",
-        "chamfer",
-        "chamfer",
         "sketch",
         "extrude",
-        "chamfer",
-        "chamfer",
-        "chamfer",
-        "chamfer",
         "sketch",
         "extrude",
-        "chamfer",
-        "chamfer",
-        "chamfer",
-        "chamfer",
         "pattern"
     ],
     "0-3": [

@@ -1,0 +1,47 @@
+{
+  "name": "backrest_headrest",
+  "children" : ["backrest_headrest_decor"],
+  "variants": [
+  {
+      "name": "single_backrest_headrest",
+      "boolean" : "addition",
+       "detail_type": "overview",
+      "parameters": {
+        "x_length": "parent x_length * [0.2, 0.4] ",
+        "y_length": "parent y_length * [0.8, 1.2] " ,
+        "z_length": "parent z_length * [0.2, 0.4] "
+      },
+      "location": {
+         "x_location": 0, 
+         "y_location": 0, 
+         "z_location": "parent z_length"
+        },
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.08, 0.15]",
+            "edges": [0, 1]
+          }
+        },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.08, 0.15]",
+            "edges": [3]
+          }
+        }
+      ]
+    }
+
+
+
+
+
+     
+  ]
+}
