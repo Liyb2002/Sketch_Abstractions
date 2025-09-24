@@ -1,9 +1,10 @@
 {
   "components": [
-    "seat slab",
-    "back band",
+    "seat",
+    "back",
     "front legs",
     "rear legs",
-    "stretchers"
+    "arms",
+    "back rest"
   ]
 }
