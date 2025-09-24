@@ -137,7 +137,7 @@ def compute_tree_values(
 
         all_pconstructions.extend(child_res["perturbed_constructions"])
         cuts_pconstructions.append(len(all_pconstructions))
-
+        
     result = {
         "features": all_features,
         "perturbed_features": all_pfeatures,
@@ -241,7 +241,8 @@ def op_to_stroke(step_path, is_overview = False):
     #3)Get the construction lines
     projection_line = line_utils.projection_lines(feature_lines)
     projection_line += line_utils.derive_construction_lines_for_splines_and_spheres(feature_lines)
-    # bounding_box_line = line_utils.bounding_box_lines(feature_lines)
+    if is_overview:
+        projection_line += line_utils.bounding_box_lines(feature_lines)
 
 
     perturbed_feature_lines = perturb_strokes.do_perturb(feature_lines)
@@ -367,8 +368,8 @@ if __name__ == "__main__":
         _ = compute_tree_values(tree, label_dir, value_map=value_map)
 
         # 4) (Optional) Visualizations for the full pass
-        visualize_tree_decomposition(tree, value_map)
-        # vis_components(tree, value_map)
+        # visualize_tree_decomposition(tree, value_map)
+        vis_components(tree, value_map)
 
         # 5) Overview-only pass: copy the tree + use a separate value_map
         overview_value_map: Dict[str, NumberOrArray] = {}

@@ -72,7 +72,7 @@
         }
         ],
       "cad_operations": [
-        { "name": "sketch_circle" },
+        { "name": "sketch_rectangle" },
         { "name": "extrude" }
       ]
     }
