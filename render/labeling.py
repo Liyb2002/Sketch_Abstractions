@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 import math
 import matplotlib.pyplot as plt
-
+import shutil
 
 import line_utils
 import perturb_strokes
@@ -472,6 +472,14 @@ def save_overview_info(
         json.dump(manifest, f, indent=2)
 
     plt.close(fig)
+
+    # Copy the shape
+    out_dir = current_folder / "output"
+    for fname in ("final_0.step", "final_0.stl"):
+        src = out_dir / fname
+        if src.exists():
+            shutil.copy2(src, save_dir / fname)
+
     return manifest
 
 
