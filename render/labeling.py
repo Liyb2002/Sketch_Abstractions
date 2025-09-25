@@ -4,6 +4,9 @@ import json
 from typing import Dict, Any, Union, Tuple, List
 import numpy as np
 import re
+from datetime import datetime
+import math
+import matplotlib.pyplot as plt
 
 
 import line_utils
@@ -342,21 +345,35 @@ def vis_overview_root(root: Dict[str, Any], value_map: Dict[str, Any]) -> None:
     )
 
 
+
+def _dir_to_elev_azim(dx, dy, dz):
+    import math
+    n = math.sqrt(dx*dx + dy*dy + dz*dz) or 1.0
+    dx, dy, dz = dx/n, dy/n, dz/n
+    elev = math.degrees(math.asin(dz))          # [-90, 90]
+    azim = math.degrees(math.atan2(dy, dx))     # (-180, 180]
+    return elev, azim
+
 def save_overview_info(
     current_folder,
     root,
     value_map,
     *,
-    views=None,              # list of (name, elev, azim)
     figsize=(6, 6),
     dpi=300,
     linewidth=0.8,
+    margin=0.06,        # fractional padding of max extent on each axis
+    axis_tilt=0.30,     # small z-tilt for the 3 direction views
 ):
     """
-    Renders the root's perturbed strokes, saves multi-view screenshots,
-    and writes a JSON containing the 3D bounding box and view metadata
-    into current_folder / 'input'.
+    Saves 7 screenshots (4 isometric + 3 direction) as 0.png..6.png
+    and a manifest as info.json under current_folder / 'input'.
     """
+    from pathlib import Path
+    import json
+    from datetime import datetime
+    import matplotlib.pyplot as plt
+
     current_folder = Path(current_folder)
     save_dir = current_folder / "input"
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -369,17 +386,7 @@ def save_overview_info(
     perturbed_feature_lines = data.get("perturbed_features", [])
     perturbed_construction_lines = data.get("perturbed_constructions", [])
 
-    # Default camera set (feel free to tweak)
-    if views is None:
-        views = [
-            ("iso",     30,   45),
-            ("iso2",    60,  225),
-            ("front",    0,    0),
-            ("right",    0,   90),
-            ("top",     90,  -90),
-        ]
-
-    # 1) Render once to establish limits/aspect; then reuse same axes
+    # Render once to lock limits/aspect (auto-scales), deterministic for consistency
     fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max) = perturb_strokes.vis_perturbed_strokes(
         perturbed_feature_lines,
         perturbed_construction_lines,
@@ -391,48 +398,83 @@ def save_overview_info(
     )
     fig.set_size_inches(figsize[0], figsize[1])
 
-    # 2) Capture one PNG per view by just changing the camera
-    stem = Path(name).stem  # "0", "0-1-2", etc.
+    # Frame with a small margin so nothing gets clipped
+    size_x = float(x_max - x_min)
+    size_y = float(y_max - y_min)
+    size_z = float(z_max - z_min)
+    max_extent = max(size_x, size_y, size_z) or 1.0
+    pad = margin * max_extent
+
+    cx = (x_min + x_max) / 2.0
+    cy = (y_min + y_max) / 2.0
+    cz = (z_min + z_max) / 2.0
+    half = max_extent / 2.0 + pad
+
+    ax.set_xlim(cx - half, cx + half)
+    ax.set_ylim(cy - half, cy + half)
+    ax.set_zlim(cz - half, cz + half)
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    # Define 7 views: 4 isometrics (top-corner) + 3 axis directions (slightly tilted)
+    iso_dirs = [
+        ( 1,  1,  1),
+        (-1,  1,  1),
+        ( 1, -1,  1),
+        (-1, -1,  1),
+    ]
+    dir_dirs = [
+        (1, 0, axis_tilt),   # +X with a little Z tilt
+        (0, 1, axis_tilt),   # +Y with a little Z tilt
+        (axis_tilt, 0, 1),   # mostly +Z but with some X
+    ]
+
+    view_list = [(f"iso{i+1}",) + d for i, d in enumerate(iso_dirs)]
+    view_list += [(f"dir_{axis}",) + d for axis, d in zip(("x","y","z"), dir_dirs)]
+
     image_records = []
-    for view_name, elev, azim in views:
+    for idx, (vname, dx, dy, dz) in enumerate(view_list):
+        elev, azim = _dir_to_elev_azim(dx, dy, dz)
         ax.view_init(elev=elev, azim=azim)
-        img_path = save_dir / f"{stem}_overview_{view_name}.png"
+        img_name = f"{idx}.png"
+        img_path = save_dir / img_name
         fig.savefig(img_path, dpi=dpi, bbox_inches="tight")
         image_records.append({
-            "name": view_name,
-            "file": str(img_path),
+            "index": idx,
+            "name": vname,
+            "file": img_name,              # relative filename: 0.png, 1.png, ...
+            "dir": {"dx": float(dx), "dy": float(dy), "dz": float(dz)},
             "elev": float(elev),
             "azim": float(azim),
         })
 
-    # 3) Bounding box + derived fields
-    size_x = float(x_max - x_min)
-    size_y = float(y_max - y_min)
-    size_z = float(z_max - z_min)
-    center = {
-        "x": float((x_min + x_max) / 2.0),
-        "y": float((y_min + y_max) / 2.0),
-        "z": float((z_min + z_max) / 2.0),
-    }
     manifest = {
         "name": name,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "preset": "4_iso_plus_3_dir",
         "images": image_records,
         "bbox": {
             "x_min": float(x_min), "x_max": float(x_max),
             "y_min": float(y_min), "y_max": float(y_max),
             "z_min": float(z_min), "z_max": float(z_max),
         },
-        "center": center,
-        "size": {"x": size_x, "y": size_y, "z": size_z},
-        "max_extent": float(max(size_x, size_y, size_z)),
+        "center": {"x": float(cx), "y": float(cy), "z": float(cz)},
+        "size": {"x": float(size_x), "y": float(size_y), "z": float(size_z)},
+        "max_extent": float(max_extent),
+        "margin": float(margin),
+        "axis_tilt": float(axis_tilt),
     }
 
-    # 4) Write JSON next to the images
-    json_path = save_dir / f"{stem}_overview.json"
-    with open(json_path, "w", encoding="utf-8") as f:
+    # Write info.json
+    with open(save_dir / "info.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
+    plt.close(fig)
     return manifest
+
+
 
 
 # ===========================

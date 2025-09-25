@@ -3,11 +3,11 @@
 Stage 2 (single call): Image + user-edited components -> narrative only
 
 Inputs:
-- ./sketch.png
-- ./sketch_components.json   (assumed correct; either {"components":[...]} or ["..."])
+- ../input/*.png
+- ../input/sketch_components.json   (assumed correct; either {"components":[...]} or ["..."])
 
 Output:
-- ./sketch_narrative.json
+- ../input/sketch_narrative.json
     { "narrative": "..." }
 
 Guarantees:
@@ -27,9 +27,11 @@ from openai import OpenAI
 
 # ---------------- Config ----------------
 MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
-INPUT_IMAGE = Path("sketch.png")
-INPUT_COMPONENTS = Path("sketch_components.json")
-OUT_NARR = Path("sketch_narrative.json")
+# CHANGE: use ../input folder for all inputs
+INPUT_DIR = Path.cwd().parent / "input"
+INPUT_COMPONENTS = INPUT_DIR / "sketch_components.json"
+# CHANGE: save outputs into the same folder as the images
+OUT_NARR = INPUT_DIR / "sketch_narrative.json"
 
 PROMPT_NARRATIVE_ONLY = (
     "You are an expert industrial-design sketch analyst.\n"
@@ -149,30 +151,27 @@ def _ensure_all_terms_in_text(narrative: str, components: List[str]) -> str:
     missing = [c for c in components if c.lower() not in low]
     if not missing:
         return narrative
-    # Append a terse final clause to include exact terms verbatim.
-    # Keeps narrative natural while guaranteeing coverage.
     suffix = " Includes: " + "; ".join(missing) + "."
     return (narrative + suffix).strip()
 
-def _call_narrative(client: OpenAI, model: str, prompt: str, img_data_url: str, edited_components: List[str]) -> Dict[str, Any]:
+def _call_narrative(client: OpenAI, model: str, prompt: str, img_data_urls: List[str], edited_components: List[str]) -> Dict[str, Any]:
     """
-    Single call: pass the authoritative component list + image; get back { "narrative": ... }.
+    Single call: pass the authoritative component list + all images; get back { "narrative": ... }.
     """
     edited_block = json.dumps({"components": edited_components}, ensure_ascii=False)
+    content: List[Dict[str, Any]] = [
+        {"type": "input_text", "text": prompt},
+        {"type": "input_text", "text": f"AUTHORITATIVE_COMPONENT_LIST_JSON:\n{edited_block}"},
+    ] + [{"type": "input_image", "image_url": url} for url in img_data_urls]
+
     resp = client.responses.create(
         model=model,
         input=[{
             "role": "user",
-            "content": [
-                {"type": "input_text", "text": prompt},
-                {"type": "input_text", "text": f"AUTHORITATIVE_COMPONENT_LIST_JSON:\n{edited_block}"},
-                {"type": "input_image", "image_url": img_data_url},
-            ],
+            "content": content,
         }],
         temperature=0.2,
         max_output_tokens=600,
-        # Optional: uncomment if your SDK supports strict JSON
-        # response_format={"type": "json_object"},
     )
     text = _extract_output_text(resp)
     if not text:
@@ -184,14 +183,23 @@ def main():
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Please set OPENAI_API_KEY in your environment.")
 
-    img_url = image_to_data_url(INPUT_IMAGE)
+    if not INPUT_DIR.exists():
+        raise SystemExit(f"Input folder not found: {INPUT_DIR}")
+
+    # Gather all PNGs in the input directory
+    png_paths = sorted(INPUT_DIR.glob("*.png"))
+    if not png_paths:
+        raise SystemExit(f"No .png files found in {INPUT_DIR}")
+
+    img_urls = [image_to_data_url(p) for p in png_paths]
     components = _load_components(INPUT_COMPONENTS)  # authoritative (edited by user)
     client = OpenAI()
 
-    obj = _call_narrative(client, MODEL, PROMPT_NARRATIVE_ONLY, img_url, components)
+    obj = _call_narrative(client, MODEL, PROMPT_NARRATIVE_ONLY, img_urls, components)
     narrative = _validate_narrative(obj)
     narrative = _ensure_all_terms_in_text(narrative, components)
 
+    OUT_NARR.parent.mkdir(parents=True, exist_ok=True)
     OUT_NARR.write_text(json.dumps({"narrative": narrative}, indent=2), encoding="utf-8")
     print(f"✅ Wrote {OUT_NARR.resolve()}")
     print(json.dumps({"narrative": narrative}, indent=2))
