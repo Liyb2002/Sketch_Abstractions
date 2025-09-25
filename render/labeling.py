@@ -342,6 +342,98 @@ def vis_overview_root(root: Dict[str, Any], value_map: Dict[str, Any]) -> None:
     )
 
 
+def save_overview_info(
+    current_folder,
+    root,
+    value_map,
+    *,
+    views=None,              # list of (name, elev, azim)
+    figsize=(6, 6),
+    dpi=300,
+    linewidth=0.8,
+):
+    """
+    Renders the root's perturbed strokes, saves multi-view screenshots,
+    and writes a JSON containing the 3D bounding box and view metadata
+    into current_folder / 'input'.
+    """
+    current_folder = Path(current_folder)
+    save_dir = current_folder / "input"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    name = root.get("name", "root.step")
+    data = value_map.get(name)
+    if data is None:
+        raise ValueError(f"[save_overview_info] No data for {name}")
+
+    perturbed_feature_lines = data.get("perturbed_features", [])
+    perturbed_construction_lines = data.get("perturbed_constructions", [])
+
+    # Default camera set (feel free to tweak)
+    if views is None:
+        views = [
+            ("iso",     30,   45),
+            ("iso2",    60,  225),
+            ("front",    0,    0),
+            ("right",    0,   90),
+            ("top",     90,  -90),
+        ]
+
+    # 1) Render once to establish limits/aspect; then reuse same axes
+    fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max) = perturb_strokes.vis_perturbed_strokes(
+        perturbed_feature_lines,
+        perturbed_construction_lines,
+        color="black",
+        linewidth=linewidth,
+        show=False,
+        deterministic_alpha=True,
+        return_bounds=True,
+    )
+    fig.set_size_inches(figsize[0], figsize[1])
+
+    # 2) Capture one PNG per view by just changing the camera
+    stem = Path(name).stem  # "0", "0-1-2", etc.
+    image_records = []
+    for view_name, elev, azim in views:
+        ax.view_init(elev=elev, azim=azim)
+        img_path = save_dir / f"{stem}_overview_{view_name}.png"
+        fig.savefig(img_path, dpi=dpi, bbox_inches="tight")
+        image_records.append({
+            "name": view_name,
+            "file": str(img_path),
+            "elev": float(elev),
+            "azim": float(azim),
+        })
+
+    # 3) Bounding box + derived fields
+    size_x = float(x_max - x_min)
+    size_y = float(y_max - y_min)
+    size_z = float(z_max - z_min)
+    center = {
+        "x": float((x_min + x_max) / 2.0),
+        "y": float((y_min + y_max) / 2.0),
+        "z": float((z_min + z_max) / 2.0),
+    }
+    manifest = {
+        "name": name,
+        "images": image_records,
+        "bbox": {
+            "x_min": float(x_min), "x_max": float(x_max),
+            "y_min": float(y_min), "y_max": float(y_max),
+            "z_min": float(z_min), "z_max": float(z_max),
+        },
+        "center": center,
+        "size": {"x": size_x, "y": size_y, "z": size_z},
+        "max_extent": float(max(size_x, size_y, size_z)),
+    }
+
+    # 4) Write JSON next to the images
+    json_path = save_dir / f"{stem}_overview.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    return manifest
+
 
 # ===========================
 # Example usage
@@ -369,9 +461,10 @@ if __name__ == "__main__":
 
         # 4) (Optional) Visualizations for the full pass
         # visualize_tree_decomposition(tree, value_map)
-        vis_components(tree, value_map)
+        # vis_components(tree, value_map)
 
         # 5) Overview-only pass: copy the tree + use a separate value_map
         overview_value_map: Dict[str, NumberOrArray] = {}
         _ = compute_tree_values(tree_overview, label_dir, value_map=overview_value_map, is_overview=True)
-        vis_overview_root(tree_overview, overview_value_map)
+        # vis_overview_root(tree_overview, overview_value_map)
+        save_overview_info(current_folder, tree_overview, overview_value_map)

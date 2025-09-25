@@ -530,8 +530,19 @@ def perturb_sphere(stroke, samples=20):
 
 # ---------------------------------------------------------------------------------------- #
 
-def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines, *,
-                          color="black", linewidth=0.8, show=True):
+def vis_perturbed_strokes(
+    perturbed_feature_lines,
+    perturbed_construction_lines,
+    *,
+    color="black",
+    linewidth=0.8,
+    show=True,
+    ax=None,
+    elev=100,
+    azim=45,
+    deterministic_alpha=False,
+    return_bounds=False,
+):
     """
     Visualize perturbed strokes with equal scaling across x/y/z.
 
@@ -539,20 +550,23 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
     ----------
     perturbed_feature_lines : polyline | line_group | nested list
         - polyline: [[x,y,z], [x,y,z], ...]
-        - line_group: [polyline, polyline, ...]
-        You may nest groups arbitrarily; they will be flattened.
+        - line_group: [polyline, polyline, ...] (nesting allowed)
     perturbed_construction_lines : same as above
     color : str
         Line color for all strokes.
     linewidth : float
         Base width for feature lines. Construction lines are thinner.
     show : bool
-        If True, calls plt.show() at the end.
-
-    Notes
-    -----
-    - Feature lines use alpha in [0.9, 1.0]
-    - Construction lines use alpha in [0.2, 0.5] and are thinner
+        If True, calls plt.show() (only if we created the axes here).
+    ax : mpl_toolkits.mplot3d axes or None
+        Provide to draw on an existing 3D axes (e.g., for multi-view screenshots).
+    elev, azim : float
+        Camera angles for view_init.
+    deterministic_alpha : bool
+        If True, uses fixed alphas (features=1.0, constructions=0.35).
+    return_bounds : bool
+        If True, returns (fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)).
+        Otherwise returns (fig, ax) for backward compatibility.
     """
 
     # ---------- helpers ----------
@@ -632,29 +646,42 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
     half = max_diff / 2.0
 
     # ---------- plot ----------
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax.set_axis_off()
-    ax.grid(False)
+    created_here = False
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        created_here = True
+        ax.set_axis_off()
+        ax.grid(False)
+    else:
+        fig = ax.get_figure()
 
-    # Feature lines: thicker, alpha 0.9–1.0
+    # Feature lines: thicker, alpha 0.9–1.0 (or fixed)
+    feat_alpha = 1.0 if deterministic_alpha else None
     for pts in feat_lines:
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         zs = [p[2] for p in pts]
-        ax.plot(xs, ys, zs, color=color,
-                linewidth=linewidth,
-                alpha=random.uniform(0.9, 1.0))
+        ax.plot(
+            xs, ys, zs,
+            color=color,
+            linewidth=linewidth,
+            alpha=(feat_alpha if feat_alpha is not None else random.uniform(0.9, 1.0))
+        )
 
-    # Construction lines: thinner, alpha 0.2–0.5
-    cons_width = max(0.1, 0.6 * linewidth)  # thinner than feature lines
+    # Construction lines: thinner, alpha 0.2–0.5 (or fixed)
+    cons_width = max(0.1, 0.6 * linewidth)
+    cons_alpha = 0.35 if deterministic_alpha else None
     for pts in cons_lines:
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         zs = [p[2] for p in pts]
-        ax.plot(xs, ys, zs, color=color,
-                linewidth=cons_width,
-                alpha=random.uniform(0.2, 0.5))
+        ax.plot(
+            xs, ys, zs,
+            color=color,
+            linewidth=cons_width,
+            alpha=(cons_alpha if cons_alpha is not None else random.uniform(0.2, 0.5))
+        )
 
     # Equalize axes
     ax.set_xlim([x_center - half, x_center + half])
@@ -665,11 +692,13 @@ def vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines,
     except Exception:
         pass
 
-    ax.view_init(elev=100, azim=45)
+    ax.view_init(elev=elev, azim=azim)
 
-    if show:
+    if show and created_here:
         plt.show()
 
+    if return_bounds:
+        return fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)
     return fig, ax
 
 
@@ -681,7 +710,6 @@ def vis_labeled_strokes(perturbed_feature_lines,
                         linewidth=0.8,
                         show=True):
     """
-    Same visualization as vis_perturbed_strokes, but:
       - ALL strokes are drawn (context) in the default style (black).
       - ONLY the selected label slice (by cuts & label_id) is overplotted in RED.
 
@@ -693,7 +721,6 @@ def vis_labeled_strokes(perturbed_feature_lines,
     label_id: which child slice to highlight (0..K-1)
     """
 
-    # ---------- helpers (aligned with vis_perturbed_strokes) ----------
     def is_number(v):
         return isinstance(v, (int, float))
 
@@ -785,7 +812,6 @@ def vis_labeled_strokes(perturbed_feature_lines,
     ax.set_axis_off()
     ax.grid(False)
 
-    # Context first (black), same style as vis_perturbed_strokes
     for pts in feat_ctx:
         xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
         ax.plot(xs, ys, zs, color="black",
