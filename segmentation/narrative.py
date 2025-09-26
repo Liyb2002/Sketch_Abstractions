@@ -41,9 +41,11 @@ PROMPT_NARRATIVE = (
 
 PROMPT_COMPONENTS = (
     "From this sketch image, output exactly this JSON object:\n"
-    '{ "components": ["<component 1>", "<component 2>", "..."] }\n'
-    "List only the major physical parts the object is built from (e.g., seat slab, back band, "
-    "front legs, rear legs, stretchers, arm rails). Do NOT include meta terms like 'sketch' or '3D'. "
+    '{ "components": [ {"name":"<component name>", "count": <integer>}, ... ] }\n'
+    "Report only physical parts (e.g., seat slab, backrest, front legs, rear legs, stretchers, arm rails). "
+    "Return correct integer counts you can see (e.g., 4 legs, 2 arms). "
+    "No materials, textures, perspectives, brand names, or meta terms ('sketch','3D','object','assembly'). "
+    "Aim for 5–14 items; omit tiny hardware unless visually dominant. "
     "STRICT: Output only a single JSON object. No extra text."
 )
 

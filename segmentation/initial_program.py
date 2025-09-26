@@ -210,27 +210,42 @@ PROMPT_STEP1 = """
 System instructions (comply strictly):
 - You are a ShapeAssembly compiler. Think internally; DO NOT reveal your reasoning.
 - Output ONLY a JSON object matching the schema below. No prose, no code blocks.
-- Use only: bbox + Cuboid(l,w,h,aligned), attach, squeeze, reflect, translate.
+- Use only: bbox + Cuboid(l,w,h,aligned), attach, squeeze. (Do NOT use reflect or translate in Step-1.)
 - Enforce grounded order: the first attach must involve 'bbox'. After an attach, both endpoints are grounded.
-- All coordinates must be in [0,1]. Use small integers for translate.n.
-- Keep it minimal: few cuboids and ops; do not fabricate extra parts.
+- All coordinates must be in [0,1]. Keep the program minimal: as few parts/ops as possible consistent with the components and their counts.
 - If info is missing, set bbox to l=w=h=1.0 and use simple centered attaches.
 
-JSON shape (use exactly these keys):
+About `components` (input you will receive as JSON):
+- It may be one of:
+  1) ["seat","backrest","leg","leg","leg","leg"]                       # list of names (duplicates imply count)
+  2) {"seat":1, "backrest":1, "leg":4, "arm":2}                        # dict name -> count
+  3) [{"name":"seat","count":1},{"name":"leg","count":4}, ...]         # list of objects
+- Expand this into **instances**. For any component with count > 1, create distinct instances and unique variable names by appending 1-based indices, e.g., leg1, leg2, leg3, leg4.
+- Each component instance MUST have its own cuboid (one cuboid per instance). Do NOT merge instances or use translate arrays here.
+
+Minimal geometry guidance:
+- Choose reasonable (l,w,h) per component instance; keep 'aligned' = true unless contradicted.
+- Attach every cuboid to 'bbox' using normalized coordinates in [0,1]. Keep placements simple and distinct enough to avoid overlaps when possible.
+- Prefer keeping sizes identical for instances of the same component name unless clearly unreasonable.
+
+JSON shape (use exactly these keys; add instances into 'cuboids' and corresponding 'attach'):
 {
   "program": {
     "name": "Program1",
     "bblock": { "l": 1.0, "w": 1.0, "h": 1.0, "aligned": true },
-    "cuboids": [ { "var":"cube0","l":0.5,"w":0.5,"h":0.2,"aligned": true } ],
-    "attach":  [ { "a":"cube0","b":"bbox","x1":0.5,"y1":0.5,"z1":1.0,"x2":0.5,"y2":0.5,"z2":1.0 } ],
+    "cuboids": [ { "var":"seat1","l":0.6,"w":0.6,"h":0.1,"aligned": true }, { "var":"leg1","l":0.1,"w":0.1,"h":0.5,"aligned": true }, ... ],
+    "attach":  [ { "a":"seat1","b":"bbox","x1":0.5,"y1":0.5,"z1":1.0,"x2":0.5,"y2":0.5,"z2":1.0 }, { "a":"leg1","b":"bbox", ... }, ... ],
     "squeeze": [],
     "reflect": [],
     "translate": [],
     "subroutines": []
   }
 }
+
 Return ONLY the JSON object.
 """.strip()
+
+
 
 PROMPT_STEP2 = """
 You are a ShapeAssembly compiler/editor.
@@ -283,6 +298,50 @@ Please return a corrected JSON IR that:
 - Sets program.bblock.l,w,h EXACTLY to the real bbox: ({L},{W},{H})
 - Rescales each cuboid's (l,w,h) by axiswise factors (L/L0, W/W0, H/H0) from the OLD bblock you used.
 - Keeps attach coordinates unchanged in [0,1]; avoid adding/removing parts unless essential.
+Return ONLY the JSON object (no prose).
+""".strip()
+
+
+PROMPT_STEP3_TRANSLATE = """
+You are a ShapeAssembly compiler/editor.
+
+INPUT:
+- step2_IR: a VALID ShapeAssembly JSON IR (keys: program -> name, bblock, cuboids, attach, squeeze, reflect, translate, subroutines).
+- The program may contain repeated parts like leg1, leg2, leg3, leg4 that are identical except location.
+
+TASK (Translate-Only Instancing):
+1) Detect groups of cuboids that share a base name with trailing digits (e.g., leg1..leg4, arm1..arm2) AND have identical (l,w,h,aligned).
+2) For each group:
+   a) Choose ONE member as the prototype (the one placed at the "first" corner/position is fine). Keep its 'attach' as-is.
+   b) REMOVE the other group members from 'cuboids' AND remove their 'attach' entries.
+   c) Recreate the removed members **only** using 'translate' operations applied to the prototype.
+      - Use ONLY keys: {"c","axis","n","d"} with axis in {"X","Y","Z"}, n >= 2 for arrays, and d in [0,1].
+      - Compute 'd' from normalized coordinate deltas between member placements and the prototype.
+      - If the group forms a 1x2 or 2x2 (or NxM) grid, emit minimal arrays:
+        * Example: two columns -> {"c":"leg","axis":"X","n":2,"d":dx}
+        * Then two rows -> {"c":"leg","axis":"Y","n":2,"d":dy}
+      - DO NOT use 'reflect' for this task.
+3) Do NOT modify program.bblock nor any existing normalized attach coordinates (besides deleting the duplicates).
+4) Preserve all unrelated parts and ops. Keep ordering minimal and stable.
+5) Return ONLY a single JSON object with the same top-level schema. No prose.
+
+Hard constraints:
+- Allowed keys under program: name, bblock, cuboids, attach, squeeze, reflect, translate, subroutines. (You may leave reflect/squeeze/subroutines empty.)
+- Every number must be valid JSON; coordinates must remain normalized in [0,1].
+- Use translate-only for instancing.
+
+Return ONLY the final JSON IR (no code fences).
+""".strip()
+
+PROMPT_STEP3_REPAIR = """
+Your Step-3 translate-only JSON IR failed validation:
+
+{errors}
+
+Please return a corrected JSON IR that:
+- Keeps only translate (no reflect) for instancing.
+- Preserves the existing bblock and normalized coordinates.
+- Uses the minimal number of translate arrays to recreate the removed instances.
 Return ONLY the JSON object (no prose).
 """.strip()
 
@@ -359,6 +418,37 @@ def repair_step2(bad_ir: Dict[str,Any], info: Dict[str,Any],
     )
     return _extract_json(resp.choices[0].message.content or "")
 
+
+def call_step3_translate(step2_ir: Dict[str, Any]) -> Dict[str, Any]:
+    client = OpenAI()
+    content = [
+        {"type": "text", "text": PROMPT_STEP3_TRANSLATE},
+        {"type": "text", "text": "step2_IR:"},
+        {"type": "text", "text": json.dumps(step2_ir, separators=(',', ':'))[:24000]},
+    ]
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": content}],
+        temperature=0.1,
+        max_tokens=3000,
+    )
+    return _extract_json(resp.choices[0].message.content or "")
+
+def repair_step3_translate(bad_ir: Dict[str, Any], errors: str) -> Dict[str, Any]:
+    client = OpenAI()
+    content = [
+        {"type": "text", "text": PROMPT_STEP3_REPAIR.replace("{errors}", errors)},
+        {"type": "text", "text": "Original (invalid) JSON:"},
+        {"type": "text", "text": json.dumps(bad_ir, separators=(',', ':'))[:24000]},
+    ]
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": content}],
+        temperature=0.05,
+        max_tokens=3000,
+    )
+    return _extract_json(resp.choices[0].message.content or "")
+
 # ---------- Main ----------
 def main():
     ap = argparse.ArgumentParser()
@@ -408,10 +498,28 @@ def main():
         if bbox_err2:
             raise SystemExit(f"BBox mismatch after repair: {bbox_err2}")
 
-    # --- Save ONLY final JSON IR ---
+    # --- Step 3: translate-only instancing via API ---
+    ir3 = call_step3_translate(ir2)
+    try:
+        validate_ir(ir3)
+    except Exception as e3:
+        ir3 = repair_step3_translate(ir3, str(e3))
+        validate_ir(ir3)
+
+    # Optional: print the Step-3 program
+    print("\n===== Step 3 ShapeAssembly Program (translate-only instancing) =====\n")
+    print(emit_shapeassembly(ir3))
+    print("\n=====================================================================\n")
+
+    # --- Save BOTH (step2 and instanced) ---
     out_ir = INPUT_DIR / "sketch_program_ir.json"
     out_ir.write_text(json.dumps(ir2, indent=2), encoding="utf-8")
+    out_ir3 = INPUT_DIR / "sketch_program_ir_instanced.json"
+    out_ir3.write_text(json.dumps(ir3, indent=2), encoding="utf-8")
     print(f"✅ Wrote {out_ir}")
+    print(f"✅ Wrote {out_ir3}")
+
+
 
 if __name__ == "__main__":
     main()

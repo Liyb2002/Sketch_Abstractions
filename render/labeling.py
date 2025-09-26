@@ -383,6 +383,7 @@ def save_overview_info(
     if data is None:
         raise ValueError(f"[save_overview_info] No data for {name}")
 
+    feature_lines = data.get("features", [])
     perturbed_feature_lines = data.get("perturbed_features", [])
     perturbed_construction_lines = data.get("perturbed_constructions", [])
 
@@ -480,6 +481,9 @@ def save_overview_info(
         if src.exists():
             shutil.copy2(src, save_dir / fname)
 
+    # Copy the feature lines
+    with open(save_dir / "perturbed_feature_lines.json", "w", encoding="utf-8") as f:
+        json.dump(perturbed_feature_lines, f, indent=2)
     return manifest
 
 

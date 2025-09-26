@@ -1,39 +1,31 @@
 #!/usr/bin/env python3
 """
-execute_shapeassembly.py
+program_executor.py
+
 Execute a ShapeAssembly-like JSON program (cuboids + attach/reflect/translate)
-and export a combined mesh to STL.
+and export a combined mesh to STL. Also exposes analytic primitives for downstream
+optimization (edges/faces per cuboid).
 
-Inputs:
-  - INPUT_DIR/sketch_program_ir.json  (from previous stage)
+Inputs (by default, in --input-dir):
+  - sketch_program_ir.json
 
-Outputs (written into INPUT_DIR):
-  - INPUT_DIR/sketch_model.stl
+Outputs:
+  - sketch_model.stl  (unless --no-export)
 
-Assumptions:
-  - All cuboids are axis-aligned with the bbox frame.
-  - 'attach' aligns points (no rotation).
-  - 'reflect' mirrors across bbox center plane for the given axis.
-  - 'translate' makes n extra copies spaced to reach d * bbox_axis_length offset.
-  - 'squeeze' is a no-op placeholder (safe to leave present in IR).
-
-Install:
-  pip install numpy trimesh
+Usage:
+  python program_executor.py --input-dir ./input
 """
 
 from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import trimesh
+import argparse
 
-# ---------- Config ----------
-INPUT_DIR = Path.cwd().parent / "input"
-IN_IR  = INPUT_DIR / "sketch_program_ir.json"
-OUT_STL = INPUT_DIR / "sketch_model.stl"
 
 # ---------- Data Types ----------
 @dataclass
@@ -42,12 +34,60 @@ class CuboidSpec:
     l: float
     w: float
     h: float
-    aligned: bool = True
+    aligned: bool = True  # reserved for future rotations
 
 @dataclass
 class Instance:
     spec: CuboidSpec
-    T: np.ndarray  # 4x4 world transform (we use translation only here)
+    T: np.ndarray  # 4x4 world transform (translation only in this executor)
+
+@dataclass
+class CuboidGeom:
+    """Analytic geometry for a placed, axis-aligned cuboid."""
+    name: str
+    origin: np.ndarray  # min corner (x0,y0,z0)
+    size: np.ndarray    # (l,w,h)
+
+    def edges(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        l, w, h = self.size
+        x0, y0, z0 = self.origin
+        x1, y1, z1 = x0 + l, y0 + w, z0 + h
+        vs = [
+            np.array([x0,y0,z0]), np.array([x1,y0,z0]),
+            np.array([x0,y1,z0]), np.array([x1,y1,z0]),
+            np.array([x0,y0,z1]), np.array([x1,y0,z1]),
+            np.array([x0,y1,z1]), np.array([x1,y1,z1]),
+        ]
+        E = []
+        # bottom rectangle
+        E += [(vs[0],vs[1]), (vs[1],vs[3]), (vs[3],vs[2]), (vs[2],vs[0])]
+        # top rectangle
+        E += [(vs[4],vs[5]), (vs[5],vs[7]), (vs[7],vs[6]), (vs[6],vs[4])]
+        # verticals
+        E += [(vs[0],vs[4]), (vs[1],vs[5]), (vs[2],vs[6]), (vs[3],vs[7])]
+        return E
+
+    def faces(self) -> List[Tuple[np.ndarray, float, Tuple[np.ndarray,np.ndarray]]]:
+        """
+        Faces as (normal n, plane offset d, (center, half_size)),
+        with plane n·x = d and half_size the two in-plane half-lengths.
+        Normals are one of ±ex, ±ey, ±ez.
+        """
+        l, w, h = self.size
+        x0, y0, z0 = self.origin
+        x1, y1, z1 = x0 + l, y0 + w, z0 + h
+        faces = []
+        # X- planes
+        faces.append((np.array([ 1,0,0],float),  x0, (np.array([x0, (y0+y1)/2, (z0+z1)/2]), np.array([w/2, h/2]))))
+        faces.append((np.array([-1,0,0],float), -x1, (np.array([x1, (y0+y1)/2, (z0+z1)/2]), np.array([w/2, h/2]))))
+        # Y- planes
+        faces.append((np.array([0, 1,0],float),  y0, (np.array([(x0+x1)/2, y0, (z0+z1)/2]), np.array([l/2, h/2]))))
+        faces.append((np.array([0,-1,0],float), -y1, (np.array([(x0+x1)/2, y1, (z0+z1)/2]), np.array([l/2, h/2]))))
+        # Z- planes
+        faces.append((np.array([0,0, 1],float),  z0, (np.array([(x0+x1)/2, (y0+y1)/2, z0]), np.array([l/2, w/2]))))
+        faces.append((np.array([0,0,-1],float), -z1, (np.array([(x0+x1)/2, (y0+y1)/2, z1]), np.array([l/2, w/2]))))
+        return faces
+
 
 # ---------- Helpers ----------
 def vec(x, y, z) -> np.ndarray:
@@ -59,20 +99,24 @@ def make_T(translation: np.ndarray) -> np.ndarray:
     return T
 
 def center_from_T(spec: CuboidSpec, T: np.ndarray) -> np.ndarray:
-    # center = origin + half extents
     return T[:3, 3] + vec(spec.l, spec.w, spec.h) * 0.5
 
 def T_from_center(spec: CuboidSpec, center: np.ndarray) -> np.ndarray:
-    # origin = center - half extents
     origin = center - vec(spec.l, spec.w, spec.h) * 0.5
     return make_T(origin)
 
+
 # ---------- Executor ----------
 class Executor:
+    """
+    Minimal interpreter: attach, reflect, translate.
+    All cuboids are axis-aligned; transforms are translations only.
+    """
+
     def __init__(self, ir: Dict):
         self.P = ir["program"]
         bb = self.P["bblock"]
-        self.bbox = CuboidSpec("bbox", float(bb["l"]), float(bb["w"]), float(bb["h"]), bool(bb["aligned"]))
+        self.bbox = CuboidSpec("bbox", float(bb["l"]), float(bb["w"]), float(bb["h"]), bool(bb.get("aligned", True)))
         # world frame: bbox origin at (0,0,0)
         self.instances: Dict[str, Instance] = {"bbox": Instance(self.bbox, make_T(vec(0,0,0)))}
         # declare cuboid specs
@@ -84,82 +128,65 @@ class Executor:
                 l=float(c["l"]), w=float(c["w"]), h=float(c["h"]),
                 aligned=bool(c.get("aligned", True))
             )
-            # not placed yet
-        # apply statements
-        self._apply_attaches()
+        # apply statements in robust order
+        self._apply_attaches()    # multi-pass until fixed point
         self._apply_reflects()
         self._apply_translates()
-        # optional squeeze (no-op placeholder)
-        # self._apply_squeezes()
 
-    # ---- Attach ----
+    # ---- Attach (robust to IR ordering via multi-pass) ----
     def _apply_attaches(self):
-        """
-        attach(a, b, x1,y1,z1, x2,y2,z2)
-        Place the un-grounded one so that:
-          point_a_local = (x1 * a.l, y1 * a.w, z1 * a.h)
-          point_b_world = T_b * (x2 * b.l, y2 * b.w, z2 * b.h)
-        and T_a positions point_a_local exactly at point_b_world.
-        """
         grounded = set(self.instances.keys())  # includes 'bbox'
-        for a in self.P.get("attach", []):
-            a_name, b_name = str(a["a"]), str(a["b"])
-            x1,y1,z1 = float(a["x1"]), float(a["y1"]), float(a["z1"])
-            x2,y2,z2 = float(a["x2"]), float(a["y2"]), float(a["z2"])
-
-            # ensure specs exist
-            if a_name not in self.specs or b_name not in self.specs:
-                raise ValueError(f"attach refers unknown cuboid: {a_name} or {b_name}")
-
-            # ensure at least one is grounded (as promised by IR validation)
-            if not ((a_name in grounded) or (b_name in grounded)):
-                raise ValueError(f"attach not grounded: {a_name}<->{b_name}")
-
-            # fetch or place
-            if b_name not in self.instances:
-                # place b via current a (if a grounded)
-                if a_name not in self.instances:
-                    raise ValueError("Neither side placed—unexpected under grounded-order rule.")
-                inst_a = self.instances[a_name]
-                spec_b = self.specs[b_name]
-                p_world = self._point_in_world(inst_a, self.specs[a_name], x1,y1,z1)
-                p_b_local = vec(x2*spec_b.l, y2*spec_b.w, z2*spec_b.h)
-                T_b = make_T(p_world - p_b_local)
-                self.instances[b_name] = Instance(spec_b, T_b)
-                grounded.add(b_name)
-            else:
-                # b exists; place a
-                inst_b = self.instances[b_name]
-                spec_a = self.specs[a_name]
-                p_world = self._point_in_world(inst_b, self.specs[b_name], x2,y2,z2)
-                p_a_local = vec(x1*spec_a.l, y1*spec_a.w, z1*spec_a.h)
-                T_a = make_T(p_world - p_a_local)
-                self.instances[a_name] = Instance(spec_a, T_a)
-                grounded.add(a_name)
+        pending = list(self.P.get("attach", []))
+        last_len = None
+        while pending and last_len != len(pending):
+            last_len = len(pending)
+            next_pending = []
+            for a in pending:
+                a_name, b_name = str(a["a"]), str(a["b"])
+                x1,y1,z1 = float(a["x1"]), float(a["y1"]), float(a["z1"])
+                x2,y2,z2 = float(a["x2"]), float(a["y2"]), float(a["z2"])
+                if a_name not in self.specs or b_name not in self.specs:
+                    raise ValueError(f"attach refers unknown cuboid: {a_name} or {b_name}")
+                if (a_name in grounded) ^ (b_name in grounded):
+                    if b_name in grounded:
+                        inst_b = self.instances[b_name]
+                        spec_a = self.specs[a_name]
+                        p_world = self._point_in_world(inst_b, self.specs[b_name], x2,y2,z2)
+                        p_a_local = vec(x1*spec_a.l, y1*spec_a.w, z1*spec_a.h)
+                        self.instances[a_name] = Instance(spec_a, make_T(p_world - p_a_local))
+                        grounded.add(a_name)
+                    else:
+                        inst_a = self.instances[a_name]
+                        spec_b = self.specs[b_name]
+                        p_world = self._point_in_world(inst_a, self.specs[a_name], x1,y1,z1)
+                        p_b_local = vec(x2*spec_b.l, y2*spec_b.w, z2*spec_b.h)
+                        self.instances[b_name] = Instance(spec_b, make_T(p_world - p_b_local))
+                        grounded.add(b_name)
+                else:
+                    next_pending.append(a)
+            pending = next_pending
+        if pending:
+            raise ValueError(f"Unresolved attaches (cyclic or ungrounded): {pending}")
 
     def _point_in_world(self, inst: Instance, spec: CuboidSpec, x: float, y: float, z: float) -> np.ndarray:
         local = vec(x*spec.l, y*spec.w, z*spec.h)
-        # only translation in T, so it's simply:
         return inst.T[:3,3] + local
 
     # ---- Reflect ----
     def _apply_reflects(self):
         """
-        reflect(c, axis) : make a mirrored copy across the bbox center plane on that axis.
-        New instance name auto-suffixed: e.g., part -> part_R1, part_R2, ...
+        reflect(c, axis): mirrored copy across the bbox center plane on that axis.
+        New instance name auto-suffixed: part -> part_R1, part_R2, ...
         """
         suffix_count: Dict[str, int] = {}
         for r in self.P.get("reflect", []):
             src = str(r["c"])
             axis = str(r["axis"]).upper()
             if src not in self.instances:
-                # if reflect is listed before attachment grounded it, skip gracefully
-                # (you can prepass attaches in IR if needed)
                 continue
             src_inst = self.instances[src]
             spec = src_inst.spec
             center = center_from_T(spec, src_inst.T)
-            # bbox center:
             bb_center = vec(self.bbox.l, self.bbox.w, self.bbox.h) * 0.5
 
             mirrored_center = center.copy()
@@ -173,7 +200,6 @@ class Executor:
                 raise ValueError(f"Bad axis for reflect: {axis}")
 
             T_new = T_from_center(spec, mirrored_center)
-
             n = suffix_count.get(src, 0) + 1
             suffix_count[src] = n
             new_name = f"{src}_R{n}"
@@ -195,10 +221,8 @@ class Executor:
             axis = str(t["axis"]).upper()
             n = int(t["n"])
             d = float(t["d"])
-
             if src not in self.instances:
-                continue  # not yet placed; safe to skip
-
+                continue
             base = self.instances[src]
             direction = axis_vecs[axis]
             total_offset_world = direction * (d * axis_len[axis])
@@ -217,39 +241,57 @@ class Executor:
     def to_trimesh(self) -> trimesh.Trimesh:
         meshes: List[trimesh.Trimesh] = []
         for name, inst in self.instances.items():
-            # skip bbox if you don't want it in the export; include it if you do
             if name == "bbox":
-                # Comment out next line to EXCLUDE bbox from the model
-                continue
-            # trimesh box is centered at origin by default; we want origin at min corner
-            # Trick: create box centered at half extents, or make and translate.
+                continue  # exclude bbox from export
             box = trimesh.creation.box(extents=(inst.spec.l, inst.spec.w, inst.spec.h))
-            # trimesh box is centered at origin; we need to move it so its min corner is at origin
-            # box.bounds -> (min, max) around origin; we shift by +half extents
             half = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float) * 0.5
-            box.apply_translation(half)
-            # now place via instance transform (translation only in our T)
-            box.apply_translation(inst.T[:3,3])
+            box.apply_translation(half)          # move min corner to origin
+            box.apply_translation(inst.T[:3,3])  # place
             meshes.append(box)
 
         if not meshes:
-            # Export an empty bbox-sized point if nothing else; avoids failure
             return trimesh.Trimesh(vertices=np.zeros((0,3)), faces=np.zeros((0,3), dtype=int))
-
         return trimesh.util.concatenate(meshes)
 
-# ---------- Main ----------
+    # ---- Primitive extraction for fitting ----
+    def primitives(self) -> List[CuboidGeom]:
+        prims = []
+        for name, inst in self.instances.items():
+            if name == "bbox":
+                continue
+            o = inst.T[:3,3].copy()  # min corner by construction
+            s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
+            prims.append(CuboidGeom(name=name, origin=o, size=s))
+        return prims
+
+
+# ---------- CLI ----------
 def main():
-    if not IN_IR.exists():
-        raise SystemExit(f"IR not found: {IN_IR}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input-dir", type=Path, default=Path("./input"))
+    parser.add_argument("--no-export", action="store_true", help="Skip STL export")
+    args = parser.parse_args()
 
-    ir = json.loads(IN_IR.read_text(encoding="utf-8"))
+    in_ir = args.input_dir / "sketch_program_ir.json"
+    out_stl = args.input_dir / "sketch_model.stl"
+
+    if not in_ir.exists():
+        raise SystemExit(f"IR not found: {in_ir}")
+
+    ir = json.loads(in_ir.read_text(encoding="utf-8"))
     exe = Executor(ir)
-    mesh = exe.to_trimesh()
 
-    # Ensure watertight? (not necessary for a union of boxes; STL is fine with overlaps)
-    mesh.export(OUT_STL)
-    print(f"✅ Wrote {OUT_STL}  (faces: {len(mesh.faces)}, verts: {len(mesh.vertices)})")
+    if not args.no_export:
+        mesh = exe.to_trimesh()
+        mesh.export(out_stl)
+        print(f"Wrote {out_stl}  (faces: {len(mesh.faces)}, verts: {len(mesh.vertices)})")
+
+    prims = exe.primitives()
+    print(f"Placed cuboids (excluding bbox): {len(prims)}")
+    if prims:
+        p0 = prims[0]
+        print(f"  First cuboid '{p0.name}' origin={p0.origin.tolist()} size={p0.size.tolist()}")
+
 
 if __name__ == "__main__":
     main()
