@@ -107,33 +107,6 @@ def T_from_center(spec: CuboidSpec, center: np.ndarray) -> np.ndarray:
 
 
 
-def _geom_aabb_from_executor(exe: Executor):
-    """Compute assembled geometry AABB (excluding bbox) from Executor primitives()."""
-    prims = exe.primitives()
-    if not prims:
-        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
-
-    mins = np.full(3, float("inf"))
-    maxs = np.full(3, float("-inf"))
-    for p in prims:
-        o = p.origin
-        s = p.size
-        x0, y0, z0 = o
-        x1, y1, z1 = o + s
-        mins = np.minimum(mins, [x0, y0, z0])
-        maxs = np.maximum(maxs, [x1, y1, z1])
-    return tuple(mins.tolist()), tuple(maxs.tolist())
-
-
-def _strokes_aabb_from_info(info: dict):
-    """Extract stroke bbox from info.json (expects bbox with x_min..z_max)."""
-    b = info.get("bbox")
-    if not b:
-        raise ValueError("info.json missing 'bbox' with x_min..z_max")
-    mins = (float(b["x_min"]), float(b["y_min"]), float(b["z_min"]))
-    maxs = (float(b["x_max"]), float(b["y_max"]), float(b["z_max"]))
-    return mins, maxs
-
 
 # ---------- Executor ----------
 class Executor:
