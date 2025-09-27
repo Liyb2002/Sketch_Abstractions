@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-One-shot IR builder (Step1 + Step2 combined, prints Step1 program):
+initial_program.py
+
+One-shot IR builder (Step1 + Step3 + Deterministic scaling using strokes AABB):
 - INPUT_DIR = Path.cwd().parent / "input"
 - Uses:
     INPUT_DIR/sketch_narrative.json
     INPUT_DIR/sketch_components.json
-    INPUT_DIR/info.json
-- Produces ONLY:
-    INPUT_DIR/sketch_program_ir.json
+    INPUT_DIR/perturbed_feature_lines.json   <-- used to set bblock.min/max after Step-3
+- Produces:
+    INPUT_DIR/sketch_program_ir_instanced.json   (raw Step-3, before deterministic scaling)
+    INPUT_DIR/sketch_program_ir.json             (final, deterministically scaled with min/max)
 
-It:
-1) Drafts a minimal ShapeAssembly IR (JSON) from narrative+components.
-2) Prints the Step-1 program (DSL text) to screen.
-3) Reads REAL bbox from info.json (supports keys: size{x,y,z}, bbox{x_min,...}, meta.bbox_scene, bbox_scene, bblock).
-4) Rescales IR to that bbox, validates, repairs once if needed.
+Pipeline:
+1) Step-1 (LLM): Draft minimal ShapeAssembly IR from narrative+components. (Prompt 1 unchanged)
+2) Print the Step-1 program (DSL text) to screen.
+3) Step-3 (LLM): Translate-only instancing (deduplicate repeated parts with translate arrays).
+4) Deterministic scaling (code): Set program.bblock.min/max to the strokes' AABB; rescale all cuboids to the new bbox size.
 """
 
 from __future__ import annotations
@@ -55,6 +58,11 @@ def _num(x: Any) -> str:
     return str(x)
 
 def emit_shapeassembly(ir: Dict[str, Any]) -> str:
+    """
+    DSL printer (unchanged): the printed DSL keeps
+      bbox = Cuboid(l, w, h, aligned)
+    Location (min/max) lives in JSON only.
+    """
     P = ir["program"]
     name = _ident(P["name"])
     def emit_block(prog: Dict[str, Any], header: str) -> List[str]:
@@ -94,6 +102,14 @@ def validate_ir(ir: Dict[str, Any]) -> None:
     bb = P["bblock"]
     for k in ("l","w","h","aligned"):
         if k not in bb: raise ValueError(f"bblock missing '{k}'")
+    # optional min/max; if present, they must agree with l,w,h
+    if "min" in bb and "max" in bb:
+        mn, mx = bb["min"], bb["max"]
+        if not (isinstance(mn,(list,tuple)) and len(mn)==3 and isinstance(mx,(list,tuple)) and len(mx)==3):
+            raise ValueError("bblock.min/max must be 3-element lists")
+        size = [float(mx[i]-mn[i]) for i in range(3)]
+        if abs(size[0]-float(bb["l"])) > 1e-5 or abs(size[1]-float(bb["w"])) > 1e-5 or abs(size[2]-float(bb["h"])) > 1e-5:
+            raise ValueError("bblock.l/w/h disagree with (max-min)")
     declared = {"bbox"}
     cuboids = P.get("cuboids", [])
     if not isinstance(cuboids, list): raise ValueError("'cuboids' must be a list")
@@ -120,81 +136,22 @@ def validate_ir(ir: Dict[str, Any]) -> None:
         for k in ("a","b","c","face","u","v"):
             if k not in s: raise ValueError("squeeze missing a key")
         if s["face"] not in FACES: raise ValueError(f"bad face '{s['face']}'")
-        for ref in (s["a"], s["b"], s["c"]):
-            if ref not in declared: raise ValueError(f"squeeze refers to unknown '{ref}'")
-        if not (0.0 <= float(s["u"]) <= 1.0 and 0.0 <= float(s["v"]) <= 1.0):
-            raise ValueError("squeeze (u,v) must be in [0,1]")
     for r in P.get("reflect", []):
         for k in ("c","axis"):
             if k not in r: raise ValueError("reflect missing a key")
-        if r["c"] not in declared: raise ValueError("reflect unknown cuboid")
         if r["axis"] not in AXES: raise ValueError("reflect axis must be X|Y|Z")
     for t in P.get("translate", []):
         for k in ("c","axis","n","d"):
             if k not in t: raise ValueError("translate missing a key")
-        if t["c"] not in declared: raise ValueError("translate unknown cuboid")
         if t["axis"] not in AXES: raise ValueError("translate axis must be X|Y|Z")
         if int(t["n"]) < 1: raise ValueError("translate n must be >=1")
         float(t["d"])
 
-# ---------- BBox helpers (robust to your info.json) ----------
-def _maybe(val: Any, *keys: str) -> Optional[Any]:
-    cur = val
-    for k in keys:
-        if not isinstance(cur, dict): return None
-        if k not in cur: return None
-        cur = cur[k]
-    return cur
-
-def bbox_from_info(info: Dict[str, Any]) -> Tuple[float,float,float]:
-    """
-    Accepts any of:
-      - info['size'] = {'x','y','z'}                    -> (l,w,h) = (x,y,z)
-      - info['bbox'] = {x_min,x_max,y_min,y_max,...}    -> diffs
-      - info.meta.bbox_scene or info.bbox_scene as {l,w,h} or {min,max}
-      - info.bblock = {l,w,h}
-    """
-    # 1) Preferred: explicit size
-    s = info.get("size")
-    if isinstance(s, dict) and all(k in s for k in ("x","y","z")):
-        L, W, H = float(s["x"]), float(s["y"]), float(s["z"])
-        return abs(L), abs(W), abs(H)
-    # 2) bbox with mins/maxes
-    b = info.get("bbox")
-    if isinstance(b, dict) and all(k in b for k in ("x_min","x_max","y_min","y_max","z_min","z_max")):
-        L = float(b["x_max"] - b["x_min"])
-        W = float(b["y_max"] - b["y_min"])
-        H = float(b["z_max"] - b["z_min"])
-        return abs(L), abs(W), abs(H)
-    # 3) meta.bbox_scene
-    bs = _maybe(info, "meta", "bbox_scene")
-    if isinstance(bs, dict):
-        if all(k in bs for k in ("l","w","h")):
-            return float(bs["l"]), float(bs["w"]), float(bs["h"])
-        if all(k in bs for k in ("min","max")):
-            mn, mx = bs["min"], bs["max"]
-            if isinstance(mn,(list,tuple)) and isinstance(mx,(list,tuple)) and len(mn)==3 and len(mx)==3:
-                return float(mx[0]-mn[0]), float(mx[1]-mn[1]), float(mx[2]-mn[2])
-    # 4) bbox_scene
-    bs2 = info.get("bbox_scene")
-    if isinstance(bs2, dict):
-        if all(k in bs2 for k in ("l","w","h")):
-            return float(bs2["l"]), float(bs2["w"]), float(bs2["h"])
-        if all(k in bs2 for k in ("min","max")):
-            mn, mx = bs2["min"], bs2["max"]
-            if isinstance(mn,(list,tuple)) and isinstance(mx,(list,tuple)) and len(mn)==3 and len(mx)==3:
-                return float(mx[0]-mn[0]), float(mx[1]-mn[1]), float(mx[2]-mn[2])
-    # 5) bblock
-    bb = info.get("bblock")
-    if isinstance(bb, dict) and all(k in bb for k in ("l","w","h")):
-        return float(bb["l"]), float(bb["w"]), float(bb["h"])
-    raise ValueError("Could not find bbox in info.json (looked for size{x,y,z}, bbox{x_min..}, meta.bbox_scene, bbox_scene, bblock).")
-
 def nearly_equal(a: float, b: float, tol: float=1e-6) -> bool:
     return abs(a-b) <= max(tol, 1e-6*(abs(a)+abs(b)+1.0))
 
-def check_bbox_matches(ir: Dict[str,Any], bbox_lwh: Tuple[float,float,float]) -> Optional[str]:
-    L,W,H = bbox_lwh
+def check_bbox_size_matches(ir: Dict[str,Any], LWH: Tuple[float,float,float]) -> Optional[str]:
+    L,W,H = LWH
     try:
         bb = ir["program"]["bblock"]
         mism = []
@@ -204,6 +161,43 @@ def check_bbox_matches(ir: Dict[str,Any], bbox_lwh: Tuple[float,float,float]) ->
         return None if not mism else "; ".join(mism)
     except Exception as e:
         return f"IR missing/invalid bblock: {e}"
+
+def check_bbox_minmax_matches(ir: Dict[str,Any], mn: Tuple[float,float,float], mx: Tuple[float,float,float]) -> Optional[str]:
+    bb = ir["program"]["bblock"]
+    if "min" not in bb or "max" not in bb:
+        return "bblock.min/max missing"
+    err = []
+    for i,k in enumerate("xyz"):
+        if abs(float(bb["min"][i]) - float(mn[i])) > 1e-6: err.append(f"min.{k} {bb['min'][i]} != {mn[i]}")
+        if abs(float(bb["max"][i]) - float(mx[i])) > 1e-6: err.append(f"max.{k} {bb['max'][i]} != {mx[i]}")
+    return ", ".join(err) if err else None
+
+# ---------- Strokes AABB ----------
+def strokes_aabb(input_dir: Path) -> Tuple[Tuple[float,float,float], Tuple[float,float,float]]:
+    """
+    Reads perturbed_feature_lines.json and returns (min, max) over all sampled stroke points.
+    Expected structure: List[ List[[x,y,z], ...] ] (one list per stroke).
+    """
+    sp_path = input_dir / "perturbed_feature_lines.json"
+    if not sp_path.exists():
+        raise SystemExit(f"Missing {sp_path} — required for deterministic scaling.")
+    data = json.loads(sp_path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise SystemExit("perturbed_feature_lines.json must be a list of strokes")
+    mins = [float("inf")]*3; maxs = [float("-inf")]*3
+    valid_pts = 0
+    for s in data:
+        if not isinstance(s, list): continue
+        for p in s:
+            if not (isinstance(p, (list,tuple)) and len(p)==3): continue
+            valid_pts += 1
+            for i in range(3):
+                v = float(p[i])
+                if v < mins[i]: mins[i]=v
+                if v > maxs[i]: maxs[i]=v
+    if valid_pts == 0:
+        raise SystemExit("No valid [x,y,z] points found in perturbed_feature_lines.json")
+    return (mins[0],mins[1],mins[2]), (maxs[0],maxs[1],maxs[2])
 
 # ---------- Prompts ----------
 PROMPT_STEP1 = """
@@ -250,9 +244,6 @@ Required JSON shape (use exactly these keys; arrays may be empty):
 Return ONLY the JSON object.
 """.strip()
 
-
-
-
 PROMPT_REPAIR1 = """
 Your Step-1 JSON IR failed validation:
 
@@ -265,8 +256,6 @@ Please return a corrected JSON IR that:
 - Is minimal (few cuboids/ops), consistent with the narrative & components provided.
 Return ONLY the JSON object (no prose).
 """.strip()
-
-
 
 PROMPT_STEP3_TRANSLATE = """
 You are a ShapeAssembly compiler/editor.
@@ -344,47 +333,6 @@ def repair_step1(bad_ir: Dict[str,Any], errors: str, narrative: str, components:
     )
     return _extract_json(resp.choices[0].message.content or "")
 
-def call_step2(step1_ir: Dict[str,Any], info: Dict[str,Any]) -> Dict[str,Any]:
-    client = OpenAI()
-    content = [
-        {"type": "text", "text": PROMPT_STEP2},
-        {"type": "text", "text": "step1_IR:"},
-        {"type": "text", "text": json.dumps(step1_ir, separators=(',',':'))[:24000]},
-        {"type": "text", "text": "info.json:"},
-        {"type": "text", "text": json.dumps(info, separators=(',',':'))[:24000]},
-    ]
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role":"user","content": content}],
-        temperature=0.1,
-        max_tokens=3000,
-    )
-    return _extract_json(resp.choices[0].message.content or "")
-
-def repair_step2(bad_ir: Dict[str,Any], info: Dict[str,Any],
-                 errors: str, bbox_err: str,
-                 L: float, W: float, H: float) -> Dict[str,Any]:
-    client = OpenAI()
-    prompt = (PROMPT_REPAIR2
-              .replace("{errors}", errors or "None")
-              .replace("{bbox_error}", bbox_err or "None")
-              .replace("{L}", str(L)).replace("{W}", str(W)).replace("{H}", str(H)))
-    content = [
-        {"type": "text", "text": prompt},
-        {"type": "text", "text": "Previous (invalid) JSON IR:"},
-        {"type": "text", "text": json.dumps(bad_ir, separators=(',',':'))[:24000]},
-        {"type": "text", "text": "info.json:"},
-        {"type": "text", "text": json.dumps(info, separators=(',',':'))[:24000]},
-    ]
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role":"user","content": content}],
-        temperature=0.05,
-        max_tokens=3000,
-    )
-    return _extract_json(resp.choices[0].message.content or "")
-
-
 def call_step3_translate(step2_ir: Dict[str, Any]) -> Dict[str, Any]:
     client = OpenAI()
     content = [
@@ -415,48 +363,78 @@ def repair_step3_translate(bad_ir: Dict[str, Any], errors: str) -> Dict[str, Any
     )
     return _extract_json(resp.choices[0].message.content or "")
 
-
-# ---------- deterministic_step2 - rescaling ----------
-
-def deterministic_step2(step1_ir: Dict[str, Any], info: Dict[str, Any]) -> Dict[str, Any]:
+# ---------- Deterministic scaling (after Step-3) ----------
+def deterministic_scale_to_strokes_bbox(ir_in: Dict[str, Any], input_dir: Path) -> Dict[str, Any]:
     """
-    Deterministically rescale all cuboid (l,w,h) using the real bbox from info.json.
-    - Reads (L,W,H) via bbox_from_info(info).
-    - Scales each cuboid's (l,w,h) by (L/L0, W/W0, H/H0) where (L0,W0,H0) are old program.bblock dims.
-    - Leaves attach/squeeze/reflect/translate untouched.
-    - Sets program.bblock to the real (L,W,H).
+    Deterministically edit program.bblock to match the strokes' AABB, and rescale all cuboids:
+      - Compute (min,max) from perturbed_feature_lines.json.
+      - Set bblock.min = min, bblock.max = max, and bblock.l/w/h = max - min.
+      - Rescale each cuboid's (l,w,h) by per-axis ratios new_size / old_size.
+      - Leave attach/squeeze/reflect/translate untouched (they are normalized).
     """
-    # Deep copy to avoid mutating the input
-    ir = json.loads(json.dumps(step1_ir))
-    L, W, H = bbox_from_info(info)
+    ir = json.loads(json.dumps(ir_in))  # deep copy
+    mn, mx = strokes_aabb(input_dir)
+    L, W, H = (mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2])
 
-    # Old bbox from Step-1
-    try:
-        bb0 = ir["program"]["bblock"]
-        L0, W0, H0 = float(bb0["l"]), float(bb0["w"]), float(bb0["h"])
-    except Exception as e:
-        raise ValueError(f"Invalid Step-1 IR bblock: {e}")
+    bb = ir["program"]["bblock"]
+    L0, W0, H0 = float(bb["l"]), float(bb["w"]), float(bb["h"])
 
-    def safe_div(n: float, d: float) -> float:
-        if abs(d) < 1e-12:
-            # If the old bbox had a zero dimension, fall back to factor 1.0 to avoid NaN.
-            # (Alternatively, you could raise an error here if you prefer hard failure.)
-            return 1.0
-        return n / d
+    def sdiv(n, d): return (n/d) if abs(d) > 1e-12 else 1.0
+    sx, sy, sz = sdiv(L, L0), sdiv(W, W0), sdiv(H, H0)
 
-    sx, sy, sz = safe_div(L, L0), safe_div(W, W0), safe_div(H, H0)
-
-    # Update top-level bbox
-    bb0["l"], bb0["w"], bb0["h"] = float(L), float(W), float(H)
+    # Write new bbox grammar: size + min/max
+    bb["l"], bb["w"], bb["h"] = float(L), float(W), float(H)
+    bb["min"] = [float(mn[0]), float(mn[1]), float(mn[2])]
+    bb["max"] = [float(mx[0]), float(mx[1]), float(mx[2])]
+    # (Optional) remove legacy 'origin' if present
+    if "origin" in bb:
+        del bb["origin"]
 
     # Rescale all cuboids
     for c in ir["program"].get("cuboids", []):
         c["l"] = float(c["l"]) * sx
         c["w"] = float(c["w"]) * sy
         c["h"] = float(c["h"]) * sz
-        # keep 'aligned' as-is
 
-    # Attach/squeeze/reflect/translate remain unchanged (normalized coords).
+    return ir
+
+
+def rewrite_z_attachments_to_contain(ir_in: Dict[str, Any], eps: float = 1e-6) -> Dict[str, Any]:
+    """
+    Ensure parts attached to the bbox are contained in Z by flipping local anchor Z
+    when the attach maps the part's bottom to the bbox top (and vice versa).
+    Rules (only for attaches involving 'bbox'):
+      - If a->part, b->bbox and (z1≈0, z2≈1): set z1 := 1 (top of part to bbox top).
+      - If a->part, b->bbox and (z1≈1, z2≈0): set z1 := 0 (bottom to bbox bottom).
+      - If a->bbox, b->part and (z1≈1, z2≈0): set z2 := 1 (part’s top to bbox top).
+      - If a->bbox, b->part and (z1≈0, z2≈1): set z2 := 0 (part’s bottom to bbox bottom).
+    Leaves X/Y as-is; non-bbox attaches untouched.
+    """
+    ir = json.loads(json.dumps(ir_in))  # deep copy
+    n_fix = 0
+    for a in ir["program"].get("attach", []):
+        a_name, b_name = str(a["a"]), str(a["b"])
+        z1 = float(a["z1"]); z2 = float(a["z2"])
+
+        # part -> bbox
+        if b_name == "bbox" and a_name != "bbox":
+            if z2 > 1.0 - eps and z1 < eps:   # bottom->top (pushes part above bbox)
+                a["z1"] = 1.0; n_fix += 1      # top->top (contained)
+            elif z2 < eps and z1 > 1.0 - eps:  # top->bottom (pushes part below bbox)
+                a["z1"] = 0.0; n_fix += 1      # bottom->bottom (contained)
+
+        # bbox -> part (less common, but handle symmetrically)
+        elif a_name == "bbox" and b_name != "bbox":
+            if z1 > 1.0 - eps and z2 < eps:    # bbox top to part bottom
+                a["z2"] = 1.0; n_fix += 1      # bbox top to part top
+            elif z1 < eps and z2 > 1.0 - eps:  # bbox bottom to part top
+                a["z2"] = 0.0; n_fix += 1      # bbox bottom to part bottom
+
+        # (optional) clamp safety
+        a["z1"] = max(0.0, min(1.0, float(a["z1"])))
+        a["z2"] = max(0.0, min(1.0, float(a["z2"])))
+
+    print(f"🔧 Z-containment rewrites applied: {n_fix}")
     return ir
 
 # ---------- Main ----------
@@ -469,16 +447,15 @@ def main():
 
     narrative_path = INPUT_DIR / "sketch_narrative.json"
     components_path = INPUT_DIR / "sketch_components.json"
-    info_path = INPUT_DIR / "info.json"
+    strokes_path = INPUT_DIR / "perturbed_feature_lines.json"
 
     if not narrative_path.exists() or not components_path.exists():
         raise SystemExit("Missing sketch_narrative.json or sketch_components.json in INPUT_DIR.")
-    if not info_path.exists():
-        raise SystemExit("Missing info.json in INPUT_DIR.")
+    if not strokes_path.exists():
+        raise SystemExit("Missing perturbed_feature_lines.json in INPUT_DIR.")
 
     narrative = json.loads(narrative_path.read_text(encoding="utf-8"))["narrative"]
     components = json.loads(components_path.read_text(encoding="utf-8"))["components"]
-    info = json.loads(info_path.read_text(encoding="utf-8"))
 
     # --- Step 1: initial IR ---
     ir1 = call_step1(narrative, components)
@@ -493,39 +470,41 @@ def main():
     print(emit_shapeassembly(ir1))
     print("\n====================================================================\n")
 
-    # --- Step 2: deterministic refine using real bbox from info.json ---
-    L, W, H = bbox_from_info(info)  # robust to your info.json structure
-    ir2 = deterministic_step2(ir1, info)
-    try:
-        validate_ir(ir2)
-        bbox_err = check_bbox_matches(ir2, (L, W, H))
-        if bbox_err:
-            raise SystemExit(f"BBox mismatch after deterministic rescale: {bbox_err}")
-    except Exception as e2:
-        raise SystemExit(f"Step-2 deterministic validation error: {e2}")
-
-    # --- Step 3: translate-only instancing via API ---
-    ir3 = call_step3_translate(ir2)
+    # --- Step 3: translate-only instancing via API (on Step-1 IR) ---
+    ir3 = call_step3_translate(ir1)
     try:
         validate_ir(ir3)
     except Exception as e3:
         ir3 = repair_step3_translate(ir3, str(e3))
         validate_ir(ir3)
 
-    # Optional: print the Step-3 program
-    print("\n===== Step 3 ShapeAssembly Program (translate-only instancing) =====\n")
-    print(emit_shapeassembly(ir3))
-    print("\n=====================================================================\n")
-
-    # --- Save BOTH (step2 and instanced) ---
-    out_ir = INPUT_DIR / "sketch_program_ir.json"
-    out_ir.write_text(json.dumps(ir2, indent=2), encoding="utf-8")
+    # Save raw Step-3 output (before deterministic scaling)
     out_ir3 = INPUT_DIR / "sketch_program_ir_instanced.json"
     out_ir3.write_text(json.dumps(ir3, indent=2), encoding="utf-8")
-    print(f"✅ Wrote {out_ir}")
     print(f"✅ Wrote {out_ir3}")
 
+    # --- Deterministic scaling AFTER Step-3 using strokes AABB ---
+    ir_final = deterministic_scale_to_strokes_bbox(ir3, INPUT_DIR)
 
+    # --- Automatic Z containment rewrite (no human factor) ---
+    ir_final = rewrite_z_attachments_to_contain(ir_final)
+
+    # Validate and strict checks against strokes AABB
+    try:
+        validate_ir(ir_final)
+        mn, mx = strokes_aabb(INPUT_DIR)
+        size = (mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2])
+        err_sz = check_bbox_size_matches(ir_final, size)
+        err_mm = check_bbox_minmax_matches(ir_final, mn, mx)
+        if err_sz or err_mm:
+            raise SystemExit(f"BBox mismatch after deterministic scaling: size[{err_sz}] minmax[{err_mm}]")
+    except Exception as e2:
+        raise SystemExit(f"Deterministic scaling validation error: {e2}")
+
+    # Save FINAL scaled IR (with min/max)
+    out_ir = INPUT_DIR / "sketch_program_ir.json"
+    out_ir.write_text(json.dumps(ir_final, indent=2), encoding="utf-8")
+    print(f"✅ Wrote {out_ir}")
 
 if __name__ == "__main__":
     main()

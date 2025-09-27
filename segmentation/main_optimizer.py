@@ -38,8 +38,8 @@ def run_once():
 
     # ---- Step 2: Load pre-sampled 3D strokes
     sample_points, feature_lines = load_perturbed_feature_lines(input_dir)
+    plot_strokes_and_program(exe, sample_points, feature_lines)
     _ = compute_sdf_metrics(exe, sample_points, feature_lines, margin=0.01)
-
     
 
 

@@ -111,14 +111,34 @@ class Executor:
     """
     Minimal interpreter: attach, reflect, translate.
     All cuboids are axis-aligned; transforms are translations only.
+
+    Supports extended bbox grammar:
+      - program.bblock has required l,w,h
+      - optionally also has min/max; if so, bbox is placed at min, size = max-min
+        (l,w,h must agree with max-min).
+      - if min/max absent, bbox min is assumed at (0,0,0).
     """
 
     def __init__(self, ir: Dict):
         self.P = ir["program"]
         bb = self.P["bblock"]
-        self.bbox = CuboidSpec("bbox", float(bb["l"]), float(bb["w"]), float(bb["h"]), bool(bb.get("aligned", True)))
-        # world frame: bbox origin at (0,0,0)
-        self.instances: Dict[str, Instance] = {"bbox": Instance(self.bbox, make_T(vec(0,0,0)))}
+
+        # ---- Read bbox with optional min/max
+        if "min" in bb and "max" in bb:
+            bb_min = np.array(bb["min"], dtype=float).reshape(3)
+            bb_max = np.array(bb["max"], dtype=float).reshape(3)
+            LWH   = (bb_max - bb_min).astype(float)
+            L, W, H = float(LWH[0]), float(LWH[1]), float(LWH[2])
+            origin_world = bb_min
+        else:
+            L, W, H = float(bb["l"]), float(bb["w"]), float(bb["h"])
+            origin_world = vec(0, 0, 0)
+
+        self.bbox = CuboidSpec("bbox", L, W, H, bool(bb.get("aligned", True)))
+
+        # World frame: bbox min is at origin_world (NOT implicitly 0)
+        self.instances: Dict[str, Instance] = {"bbox": Instance(self.bbox, make_T(origin_world))}
+
         # declare cuboid specs
         self.specs: Dict[str, CuboidSpec] = {"bbox": self.bbox}
         for c in self.P.get("cuboids", []):
@@ -128,9 +148,10 @@ class Executor:
                 l=float(c["l"]), w=float(c["w"]), h=float(c["h"]),
                 aligned=bool(c.get("aligned", True))
             )
+
         # apply statements in robust order
         self._apply_attaches()    # multi-pass until fixed point
-        self._apply_reflects()
+        self._apply_reflects(origin_world)  # <-- pass bbox origin for world-center reflection
         self._apply_translates()
 
     # ---- Attach (robust to IR ordering via multi-pass) ----
@@ -173,12 +194,15 @@ class Executor:
         return inst.T[:3,3] + local
 
     # ---- Reflect ----
-    def _apply_reflects(self):
+    def _apply_reflects(self, bbox_min_world: np.ndarray):
         """
-        reflect(c, axis): mirrored copy across the bbox center plane on that axis.
+        reflect(c, axis): mirrored copy across the **world** bbox center plane on that axis.
         New instance name auto-suffixed: part -> part_R1, part_R2, ...
         """
         suffix_count: Dict[str, int] = {}
+        bb_half = vec(self.bbox.l, self.bbox.w, self.bbox.h) * 0.5
+        bb_center_world = bbox_min_world + bb_half
+
         for r in self.P.get("reflect", []):
             src = str(r["c"])
             axis = str(r["axis"]).upper()
@@ -187,15 +211,14 @@ class Executor:
             src_inst = self.instances[src]
             spec = src_inst.spec
             center = center_from_T(spec, src_inst.T)
-            bb_center = vec(self.bbox.l, self.bbox.w, self.bbox.h) * 0.5
 
             mirrored_center = center.copy()
             if axis == "X":
-                mirrored_center[0] = 2*bb_center[0] - center[0]
+                mirrored_center[0] = 2*bb_center_world[0] - center[0]
             elif axis == "Y":
-                mirrored_center[1] = 2*bb_center[1] - center[1]
+                mirrored_center[1] = 2*bb_center_world[1] - center[1]
             elif axis == "Z":
-                mirrored_center[2] = 2*bb_center[2] - center[2]
+                mirrored_center[2] = 2*bb_center_world[2] - center[2]
             else:
                 raise ValueError(f"Bad axis for reflect: {axis}")
 
