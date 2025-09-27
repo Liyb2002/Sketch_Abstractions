@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-initial_program.py
+initial_program.py  (deterministic Step-3, strict Z-up with NO z-anchor rewrites)
 
 One-shot IR builder (Step1 + Step3 + Deterministic scaling using strokes AABB):
 - INPUT_DIR = Path.cwd().parent / "input"
@@ -15,15 +15,19 @@ One-shot IR builder (Step1 + Step3 + Deterministic scaling using strokes AABB):
 Pipeline:
 1) Step-1 (LLM): Draft minimal ShapeAssembly IR from narrative+components. (Prompt 1 unchanged)
 2) Print the Step-1 program (DSL text) to screen.
-3) Step-3 (LLM): Translate-only instancing (deduplicate repeated parts with translate arrays).
+3) Step-3 (deterministic): Translate-only instancing (deduplicate repeated parts with translate arrays).
 4) Deterministic scaling (code): Set program.bblock.min/max to the strokes' AABB; rescale all cuboids to the new bbox size.
+
+Conventions:
+- Coordinate system is Z-up. The top of the object is the largest z.
+- No z-anchor rewriting is performed. We preserve whatever Step-1 produced.
 """
 
 from __future__ import annotations
 import os, json, re, argparse
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
-from openai import OpenAI
+from openai import OpenAI  # used for Step-1
 
 # ---------- Config ----------
 INPUT_DIR = Path.cwd().parent / "input"
@@ -199,7 +203,8 @@ def strokes_aabb(input_dir: Path) -> Tuple[Tuple[float,float,float], Tuple[float
         raise SystemExit("No valid [x,y,z] points found in perturbed_feature_lines.json")
     return (mins[0],mins[1],mins[2]), (maxs[0],maxs[1],maxs[2])
 
-# ---------- Prompts ----------
+# ---------- Prompts (Step-1 only) ----------
+
 PROMPT_STEP1 = """
 System instructions (comply strictly):
 - ROLE: You are a ShapeAssembly compiler. Think internally; DO NOT reveal chain-of-thought.
@@ -212,7 +217,7 @@ Global constraints:
 - Grounding: The very first attach must involve 'bbox'. After an attach, both endpoints are grounded.
 - Keep the program minimal but valid; avoid overlaps when possible; keep 'aligned' = true unless contradicted.
 - If scene size is unknown, set bbox l=w=h=1.0.
-- Strict non-overlap requirement: The axis-aligned bounding boxes of all cuboids must be pairwise disjoint within the bbox’s normalized space. No touching or intersection is allowed.
+
 About the provided `components` JSON (authoritative; may describe ANY object, not only chairs):
 - It can be one of:
   1) ["partA","partB","leg","leg", ...]                  # list of names (duplicates imply count)
@@ -244,6 +249,8 @@ Required JSON shape (use exactly these keys; arrays may be empty):
 Return ONLY the JSON object.
 """.strip()
 
+
+
 PROMPT_REPAIR1 = """
 Your Step-1 JSON IR failed validation:
 
@@ -257,50 +264,7 @@ Please return a corrected JSON IR that:
 Return ONLY the JSON object (no prose).
 """.strip()
 
-PROMPT_STEP3_TRANSLATE = """
-You are a ShapeAssembly compiler/editor.
-
-INPUT:
-- step2_IR: a VALID ShapeAssembly JSON IR (keys: program -> name, bblock, cuboids, attach, squeeze, reflect, translate, subroutines).
-- The program may contain repeated parts like leg1, leg2, leg3, leg4 that are identical except location.
-
-TASK (Translate-Only Instancing):
-1) Detect groups of cuboids that share a base name with trailing digits (e.g., leg1..leg4, arm1..arm2) AND have identical (l,w,h,aligned).
-2) For each group:
-   a) Choose ONE member as the prototype; let its exact cuboid id be pname (e.g., "leg1"). Keep its 'attach' as-is. Do NOT rename it.
-   b) REMOVE the other group members from 'cuboids' AND remove their 'attach' entries.
-   c) Recreate the removed members **only** using 'translate' operations applied to the prototype:
-      - Use ONLY keys: {"c","axis","n","d"} with axis in {"X","Y","Z"}, n >= 2 for arrays, and d in [0,1].
-      - Set "c" **exactly** to pname (the prototype's full id, e.g., "leg1"). Using a base prefix like "leg" is invalid.
-      - Compute 'd' from normalized coordinate deltas between member placements and the prototype.
-      - If the group forms a 1x2 or 2x2 (or NxM) grid, emit minimal arrays:
-        * Example: two columns -> {"c":"leg1","axis":"X","n":2,"d":dx}
-        * Then two rows -> {"c":"leg1","axis":"Y","n":2,"d":dy}
-      - DO NOT use 'reflect' for this task.
-3) Do NOT modify program.bblock nor any existing normalized attach coordinates (besides deleting the duplicates).
-4) Preserve all unrelated parts and ops. Keep ordering minimal and stable.
-5) Return ONLY a single JSON object with the same top-level schema. No prose.
-
-Hard constraints:
-- Allowed keys under program: name, bblock, cuboids, attach, squeeze, reflect, translate, subroutines. (You may leave reflect/squeeze/subroutines empty.)
-- Every number must be valid JSON; coordinates must remain normalized in [0,1].
-- 'translate.c' MUST reference an existing cuboid id that remains in program.cuboids after dedup (the prototype pname). Do not introduce new cuboid names and do not use base prefixes.
-- Use translate-only for instancing.
-""".strip()
-
-PROMPT_STEP3_REPAIR = """
-Your Step-3 translate-only JSON IR failed validation:
-
-{errors}
-
-Please return a corrected JSON IR that:
-- Keeps only translate (no reflect) for instancing.
-- Preserves the existing bblock and normalized coordinates.
-- Uses the minimal number of translate arrays to recreate the removed instances.
-Return ONLY the JSON object (no prose).
-""".strip()
-
-# ---------- Model calls ----------
+# ---------- Step-1 model calls ----------
 def call_step1(narrative: str, components: List[str]) -> Dict[str, Any]:
     client = OpenAI()
     content = [
@@ -333,35 +297,166 @@ def repair_step1(bad_ir: Dict[str,Any], errors: str, narrative: str, components:
     )
     return _extract_json(resp.choices[0].message.content or "")
 
-def call_step3_translate(step2_ir: Dict[str, Any]) -> Dict[str, Any]:
-    client = OpenAI()
-    content = [
-        {"type": "text", "text": PROMPT_STEP3_TRANSLATE},
-        {"type": "text", "text": "step2_IR:"},
-        {"type": "text", "text": json.dumps(step2_ir, separators=(',', ':'))[:24000]},
-    ]
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": content}],
-        temperature=0.1,
-        max_tokens=3000,
-    )
-    return _extract_json(resp.choices[0].message.content or "")
+# ---------- Deterministic Step-3: translate-only instancing ----------
 
-def repair_step3_translate(bad_ir: Dict[str, Any], errors: str) -> Dict[str, Any]:
-    client = OpenAI()
-    content = [
-        {"type": "text", "text": PROMPT_STEP3_REPAIR.replace("{errors}", errors)},
-        {"type": "text", "text": "Original (invalid) JSON:"},
-        {"type": "text", "text": json.dumps(bad_ir, separators=(',', ':'))[:24000]},
-    ]
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": content}],
-        temperature=0.05,
-        max_tokens=3000,
-    )
-    return _extract_json(resp.choices[0].message.content or "")
+_TRAILING_DIGITS = re.compile(r"(\d+)$")
+
+def _basename(var: str) -> str:
+    m = _TRAILING_DIGITS.search(var)
+    return var[:m.start()] if m else var
+
+def _has_trailing_digits(var: str) -> bool:
+    return _TRAILING_DIGITS.search(var) is not None
+
+def _anchor_to_bbox(attach_list: List[Dict[str,Any]], var: str) -> Optional[Tuple[float,float,float]]:
+    """
+    Return the normalized (x,y,z) anchor of `var` relative to bbox from an attach involving bbox.
+    If multiple attaches to bbox exist, prefer the first. If none, return None.
+    """
+    for a in attach_list:
+        a_name, b_name = str(a["a"]), str(a["b"])
+        if a_name == var and b_name == "bbox":
+            return (float(a["x1"]), float(a["y1"]), float(a["z1"]))
+        if a_name == "bbox" and b_name == var:
+            return (float(a["x2"]), float(a["y2"]), float(a["z2"]))
+    return None
+
+def _is_uniform_progression(vals: List[float], tol: float=1e-6) -> Tuple[bool, float]:
+    """
+    Given sorted unique vals (should include 0 for the prototype), check equal spacing.
+    Returns (ok, step).
+    """
+    if len(vals) <= 1:
+        return True, 0.0
+    diffs = [vals[i+1]-vals[i] for i in range(len(vals)-1)]
+    step = sum(diffs) / len(diffs)
+    if step <= tol:  # degenerate
+        return False, 0.0
+    for d in diffs:
+        if abs(d - step) > tol:
+            return False, 0.0
+    return True, step
+
+def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float=1e-6) -> Dict[str, Any]:
+    """
+    Deterministic translate-only instancing:
+      - Find groups like baseName + digits (leg1..leg4) with identical (l,w,h,aligned).
+      - Require each member to have an anchor attach to bbox.
+      - If members fall on a uniform grid along X/Y/Z:
+          * Keep one prototype at the minimal (x,y,z)
+          * Remove others and their attaches
+          * Emit translate ops on axes with n>1 and d>0
+      - If any condition fails, leave the group as-is.
+    """
+    ir = json.loads(json.dumps(ir_in))  # deep copy
+    P = ir["program"]
+    cuboids: List[Dict[str,Any]] = P.get("cuboids", [])
+    attaches: List[Dict[str,Any]] = P.get("attach", [])
+    translates: List[Dict[str,Any]] = P.setdefault("translate", [])
+
+    # index sizes
+    size_by_var = {
+        c["var"]: (float(c["l"]), float(c["w"]), float(c["h"]), bool(c.get("aligned", True)))
+        for c in cuboids
+    }
+
+    # group candidates: basename + identical size + has trailing digits
+    groups: Dict[Tuple[str,Tuple[float,float,float,bool]], List[str]] = {}
+    for c in cuboids:
+        var = c["var"]
+        if not _has_trailing_digits(var):
+            continue
+        key = (_basename(var), size_by_var[var])
+        groups.setdefault(key, []).append(var)
+
+    if not groups:
+        return ir  # nothing to do
+
+    cuboid_by_var = {c["var"]: c for c in cuboids}
+
+    removed_vars_total: List[str] = []
+    new_translates: List[Dict[str,Any]] = []
+
+    for (base, size), members in groups.items():
+        if len(members) < 2:
+            continue
+
+        # collect anchors
+        anchors: Dict[str, Tuple[float,float,float]] = {}
+        ok_group = True
+        for v in members:
+            anch = _anchor_to_bbox(attaches, v)
+            if anch is None:
+                ok_group = False
+                break
+            anchors[v] = anch
+        if not ok_group:
+            continue
+
+        # choose prototype at minimal (x,y,z) lexicographically
+        proto = min(members, key=lambda v: anchors[v])
+        axp, ayp, azp = anchors[proto]
+
+        # compute deltas from proto
+        deltas = {v: (anchors[v][0]-axp, anchors[v][1]-ayp, anchors[v][2]-azp) for v in members}
+
+        # unique values along each axis (should include 0)
+        xs = sorted(set(round(d[0], 10) for d in deltas.values()))
+        ys = sorted(set(round(d[1], 10) for d in deltas.values()))
+        zs = sorted(set(round(d[2], 10) for d in deltas.values()))
+
+        # verify uniform progressions
+        okx, dx = _is_uniform_progression(xs, tol)
+        oky, dy = _is_uniform_progression(ys, tol)
+        okz, dz = _is_uniform_progression(zs, tol)
+        if not (okx and oky and okz):
+            continue
+
+        # verify full cartesian grid coverage
+        expected_count = len(xs) * len(ys) * len(zs)
+        if expected_count != len(members):
+            continue
+
+        grid = {(x, y, z) for x in xs for y in ys for z in zs}
+        if any((round(dxv,10), round(dyv,10), round(dzv,10)) not in grid for (dxv,dyv,dzv) in deltas.values()):
+            continue
+
+        # build translate ops (n includes the prototype)
+        if len(xs) > 1 and dx > tol:
+            new_translates.append({"c": proto, "axis": "X", "n": len(xs), "d": float(dx)})
+        if len(ys) > 1 and dy > tol:
+            new_translates.append({"c": proto, "axis": "Y", "n": len(ys), "d": float(dy)})
+        if len(zs) > 1 and dz > tol:
+            new_translates.append({"c": proto, "axis": "Z", "n": len(zs), "d": float(dz)})
+
+        # mark all but the prototype for removal
+        to_remove = [v for v in members if v != proto]
+        removed_vars_total.extend(to_remove)
+
+    if not removed_vars_total and not new_translates:
+        return ir
+
+    # 1) remove cuboids for removed vars
+    P["cuboids"] = [c for c in cuboids if c["var"] not in set(removed_vars_total)]
+
+    # 2) remove attaches that reference removed vars
+    P["attach"] = [a for a in attaches if a["a"] not in removed_vars_total and a["b"] not in removed_vars_total]
+
+    # 3) keep unrelated squeeze/reflect; drop ones that reference removed vars
+    if "squeeze" in P:
+        P["squeeze"] = [s for s in P["squeeze"] if s["a"] not in removed_vars_total
+                        and s["b"] not in removed_vars_total and s["c"] not in removed_vars_total]
+    if "reflect" in P:
+        P["reflect"] = [r for r in P["reflect"] if r["c"] not in removed_vars_total]
+    if "translate" in P:
+        P["translate"] = [t for t in P["translate"] if t["c"] not in removed_vars_total]
+    else:
+        P["translate"] = []
+
+    # 4) append new translate arrays
+    P["translate"].extend(new_translates)
+
+    return ir
 
 # ---------- Deterministic scaling (after Step-3) ----------
 def deterministic_scale_to_strokes_bbox(ir_in: Dict[str, Any], input_dir: Path) -> Dict[str, Any]:
@@ -386,7 +481,6 @@ def deterministic_scale_to_strokes_bbox(ir_in: Dict[str, Any], input_dir: Path) 
     bb["l"], bb["w"], bb["h"] = float(L), float(W), float(H)
     bb["min"] = [float(mn[0]), float(mn[1]), float(mn[2])]
     bb["max"] = [float(mx[0]), float(mx[1]), float(mx[2])]
-    # (Optional) remove legacy 'origin' if present
     if "origin" in bb:
         del bb["origin"]
 
@@ -396,45 +490,6 @@ def deterministic_scale_to_strokes_bbox(ir_in: Dict[str, Any], input_dir: Path) 
         c["w"] = float(c["w"]) * sy
         c["h"] = float(c["h"]) * sz
 
-    return ir
-
-
-def rewrite_z_attachments_to_contain(ir_in: Dict[str, Any], eps: float = 1e-6) -> Dict[str, Any]:
-    """
-    Ensure parts attached to the bbox are contained in Z by flipping local anchor Z
-    when the attach maps the part's bottom to the bbox top (and vice versa).
-    Rules (only for attaches involving 'bbox'):
-      - If a->part, b->bbox and (z1≈0, z2≈1): set z1 := 1 (top of part to bbox top).
-      - If a->part, b->bbox and (z1≈1, z2≈0): set z1 := 0 (bottom to bbox bottom).
-      - If a->bbox, b->part and (z1≈1, z2≈0): set z2 := 1 (part’s top to bbox top).
-      - If a->bbox, b->part and (z1≈0, z2≈1): set z2 := 0 (part’s bottom to bbox bottom).
-    Leaves X/Y as-is; non-bbox attaches untouched.
-    """
-    ir = json.loads(json.dumps(ir_in))  # deep copy
-    n_fix = 0
-    for a in ir["program"].get("attach", []):
-        a_name, b_name = str(a["a"]), str(a["b"])
-        z1 = float(a["z1"]); z2 = float(a["z2"])
-
-        # part -> bbox
-        if b_name == "bbox" and a_name != "bbox":
-            if z2 > 1.0 - eps and z1 < eps:   # bottom->top (pushes part above bbox)
-                a["z1"] = 1.0; n_fix += 1      # top->top (contained)
-            elif z2 < eps and z1 > 1.0 - eps:  # top->bottom (pushes part below bbox)
-                a["z1"] = 0.0; n_fix += 1      # bottom->bottom (contained)
-
-        # bbox -> part (less common, but handle symmetrically)
-        elif a_name == "bbox" and b_name != "bbox":
-            if z1 > 1.0 - eps and z2 < eps:    # bbox top to part bottom
-                a["z2"] = 1.0; n_fix += 1      # bbox top to part top
-            elif z1 < eps and z2 > 1.0 - eps:  # bbox bottom to part top
-                a["z2"] = 0.0; n_fix += 1      # bbox bottom to part bottom
-
-        # (optional) clamp safety
-        a["z1"] = max(0.0, min(1.0, float(a["z1"])))
-        a["z2"] = max(0.0, min(1.0, float(a["z2"])))
-
-    print(f"🔧 Z-containment rewrites applied: {n_fix}")
     return ir
 
 # ---------- Main ----------
@@ -457,7 +512,7 @@ def main():
     narrative = json.loads(narrative_path.read_text(encoding="utf-8"))["narrative"]
     components = json.loads(components_path.read_text(encoding="utf-8"))["components"]
 
-    # --- Step 1: initial IR ---
+    # --- Step 1: initial IR (LLM) ---
     ir1 = call_step1(narrative, components)
     try:
         validate_ir(ir1)
@@ -470,13 +525,9 @@ def main():
     print(emit_shapeassembly(ir1))
     print("\n====================================================================\n")
 
-    # --- Step 3: translate-only instancing via API (on Step-1 IR) ---
-    ir3 = call_step3_translate(ir1)
-    try:
-        validate_ir(ir3)
-    except Exception as e3:
-        ir3 = repair_step3_translate(ir3, str(e3))
-        validate_ir(ir3)
+    # --- Step 3: deterministic translate-only instancing ---
+    ir3 = deterministic_step3_translate(ir1)
+    validate_ir(ir3)
 
     # Save raw Step-3 output (before deterministic scaling)
     out_ir3 = INPUT_DIR / "sketch_program_ir_instanced.json"
@@ -486,10 +537,7 @@ def main():
     # --- Deterministic scaling AFTER Step-3 using strokes AABB ---
     ir_final = deterministic_scale_to_strokes_bbox(ir3, INPUT_DIR)
 
-    # --- Automatic Z containment rewrite (no human factor) ---
-    ir_final = rewrite_z_attachments_to_contain(ir_final)
-
-    # Validate and strict checks against strokes AABB
+    # Strict validation against strokes AABB (Z-up)
     try:
         validate_ir(ir_final)
         mn, mx = strokes_aabb(INPUT_DIR)
