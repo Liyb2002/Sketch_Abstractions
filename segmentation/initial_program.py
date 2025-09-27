@@ -267,14 +267,15 @@ INPUT:
 TASK (Translate-Only Instancing):
 1) Detect groups of cuboids that share a base name with trailing digits (e.g., leg1..leg4, arm1..arm2) AND have identical (l,w,h,aligned).
 2) For each group:
-   a) Choose ONE member as the prototype (the one placed at the "first" corner/position is fine). Keep its 'attach' as-is.
+   a) Choose ONE member as the prototype; let its exact cuboid id be pname (e.g., "leg1"). Keep its 'attach' as-is. Do NOT rename it.
    b) REMOVE the other group members from 'cuboids' AND remove their 'attach' entries.
-   c) Recreate the removed members **only** using 'translate' operations applied to the prototype.
+   c) Recreate the removed members **only** using 'translate' operations applied to the prototype:
       - Use ONLY keys: {"c","axis","n","d"} with axis in {"X","Y","Z"}, n >= 2 for arrays, and d in [0,1].
+      - Set "c" **exactly** to pname (the prototype's full id, e.g., "leg1"). Using a base prefix like "leg" is invalid.
       - Compute 'd' from normalized coordinate deltas between member placements and the prototype.
       - If the group forms a 1x2 or 2x2 (or NxM) grid, emit minimal arrays:
-        * Example: two columns -> {"c":"leg","axis":"X","n":2,"d":dx}
-        * Then two rows -> {"c":"leg","axis":"Y","n":2,"d":dy}
+        * Example: two columns -> {"c":"leg1","axis":"X","n":2,"d":dx}
+        * Then two rows -> {"c":"leg1","axis":"Y","n":2,"d":dy}
       - DO NOT use 'reflect' for this task.
 3) Do NOT modify program.bblock nor any existing normalized attach coordinates (besides deleting the duplicates).
 4) Preserve all unrelated parts and ops. Keep ordering minimal and stable.
@@ -283,9 +284,8 @@ TASK (Translate-Only Instancing):
 Hard constraints:
 - Allowed keys under program: name, bblock, cuboids, attach, squeeze, reflect, translate, subroutines. (You may leave reflect/squeeze/subroutines empty.)
 - Every number must be valid JSON; coordinates must remain normalized in [0,1].
+- 'translate.c' MUST reference an existing cuboid id that remains in program.cuboids after dedup (the prototype pname). Do not introduce new cuboid names and do not use base prefixes.
 - Use translate-only for instancing.
-
-Return ONLY the final JSON IR (no code fences).
 """.strip()
 
 PROMPT_STEP3_REPAIR = """
