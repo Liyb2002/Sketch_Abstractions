@@ -208,33 +208,38 @@ def check_bbox_matches(ir: Dict[str,Any], bbox_lwh: Tuple[float,float,float]) ->
 # ---------- Prompts ----------
 PROMPT_STEP1 = """
 System instructions (comply strictly):
-- You are a ShapeAssembly compiler. Think internally; DO NOT reveal your reasoning.
-- Output ONLY a JSON object matching the schema below. No prose, no code blocks.
-- Use only: bbox + Cuboid(l,w,h,aligned), attach, squeeze. (Do NOT use reflect or translate in Step-1.)
-- Enforce grounded order: the first attach must involve 'bbox'. After an attach, both endpoints are grounded.
-- All coordinates must be in [0,1]. Keep the program minimal: as few parts/ops as possible consistent with the components and their counts.
-- If info is missing, set bbox to l=w=h=1.0 and use simple centered attaches.
+- ROLE: You are a ShapeAssembly compiler. Think internally; DO NOT reveal chain-of-thought.
+- OUTPUT: Return ONLY a single JSON object that matches the schema below. No prose, no code fences.
 
-About `components` (input you will receive as JSON):
-- It may be one of:
-  1) ["seat","backrest","leg","leg","leg","leg"]                       # list of names (duplicates imply count)
-  2) {"seat":1, "backrest":1, "leg":4, "arm":2}                        # dict name -> count
-  3) [{"name":"seat","count":1},{"name":"leg","count":4}, ...]         # list of objects
-- Expand this into **instances**. For any component with count > 1, create distinct instances and unique variable names by appending 1-based indices, e.g., leg1, leg2, leg3, leg4.
-- Each component instance MUST have its own cuboid (one cuboid per instance). Do NOT merge instances or use translate arrays here.
+Global constraints:
+- Coordinate system is **Z-up**: x=l (length), y=w (width), z=h (height). The top of the object has the largest z.
+- Use only these ops in Step-1: bbox + Cuboid(l,w,h,aligned), attach, squeeze. (Do NOT use reflect or translate.)
+- Normalized coordinates: All coordinates (attach/squeeze) are in [0,1] in each local axis; z=0 is the bottom face, z=1 is the top face.
+- Grounding: The very first attach must involve 'bbox'. After an attach, both endpoints are grounded.
+- Keep the program minimal but valid; avoid overlaps when possible; keep 'aligned' = true unless contradicted.
+- If scene size is unknown, set bbox l=w=h=1.0.
 
-Minimal geometry guidance:
-- Choose reasonable (l,w,h) per component instance; keep 'aligned' = true unless contradicted.
-- Attach every cuboid to 'bbox' using normalized coordinates in [0,1]. Keep placements simple and distinct enough to avoid overlaps when possible.
-- Prefer keeping sizes identical for instances of the same component name unless clearly unreasonable.
+About the provided `components` JSON (authoritative; may describe ANY object, not only chairs):
+- It can be one of:
+  1) ["partA","partB","leg","leg", ...]                  # list of names (duplicates imply count)
+  2) {"partA":2, "hinge":3, ...}                         # dict name -> count
+  3) [{"name":"partA","count":2}, ...]                   # list of objects
+- You MUST expand this **exactly** into instances. The final program MUST contain **exactly one Cuboid per instance**:
+  * For every component with count N, create N instances (no more, no less).
+  * Variable naming: sanitize the base name into an identifier, then append 1-based indices: e.g., `hinge1`, `hinge2`, ..., even if N=1.
+  * Do NOT invent extra parts; do NOT omit parts; do NOT merge repeated parts; do NOT reuse one Cuboid for multiple instances.
 
-JSON shape (use exactly these keys; add instances into 'cuboids' and corresponding 'attach'):
+Geometry guidance (generic):
+- Choose reasonable (l,w,h) per instance (instances of the same base name should generally share sizes).
+- Attach every cuboid to 'bbox' using normalized coordinates. Respect Z-up: contacts that rest on top of the bbox use z=1 on the bbox face and z=0 on the part’s bottom face.
+
+Required JSON shape (use exactly these keys; arrays may be empty):
 {
   "program": {
     "name": "Program1",
     "bblock": { "l": 1.0, "w": 1.0, "h": 1.0, "aligned": true },
-    "cuboids": [ { "var":"seat1","l":0.6,"w":0.6,"h":0.1,"aligned": true }, { "var":"leg1","l":0.1,"w":0.1,"h":0.5,"aligned": true }, ... ],
-    "attach":  [ { "a":"seat1","b":"bbox","x1":0.5,"y1":0.5,"z1":1.0,"x2":0.5,"y2":0.5,"z2":1.0 }, { "a":"leg1","b":"bbox", ... }, ... ],
+    "cuboids": [ { "var":"part1","l":0.5,"w":0.5,"h":0.5,"aligned": true }, ... ],
+    "attach":  [ { "a":"part1","b":"bbox","x1":0.5,"y1":0.5,"z1":0.0,"x2":0.5,"y2":0.5,"z2":1.0 }, ... ],
     "squeeze": [],
     "reflect": [],
     "translate": [],
@@ -247,30 +252,6 @@ Return ONLY the JSON object.
 
 
 
-PROMPT_STEP2 = """
-You are a ShapeAssembly compiler/editor.
-
-TASK:
-Given:
-  (A) A first-pass ShapeAssembly JSON IR ("step1_IR") with a placeholder bbox (often 1,1,1).
-  (B) An info.json containing the REAL scene bbox ("bbox_scene").
-
-Do TWO things and return ONLY a corrected JSON IR:
-1) Read the real bbox (l,w,h) from info.json. It may appear as:
-     - size = { "x","y","z" }                             (map to l,w,h)
-     - bbox = { "x_min","x_max","y_min","y_max","z_min","z_max" } -> diffs
-     - meta.bbox_scene or bbox_scene = { "l","w","h" } or { "min":[...], "max":[...] }
-     - bblock = { "l","w","h" }
-2) Edit the ShapeAssembly IR so that:
-   - program.bblock.l,w,h equal the REAL bbox (keep aligned=true unless contradicted).
-   - Each cuboid's (l,w,h) is rescaled axiswise by factors (L_new/L_old, W_new/W_old, H_new/H_old)
-     computed from the OLD bblock in step1_IR.
-   - Do NOT change any 'attach' coordinates (they are already normalized).
-   - Do NOT change reflect/translate unless necessary for validity.
-   - Preserve names and ordering.
-
-Return ONLY the final JSON IR. No prose, no code fences.
-""".strip()
 
 PROMPT_REPAIR1 = """
 Your Step-1 JSON IR failed validation:
@@ -285,21 +266,6 @@ Please return a corrected JSON IR that:
 Return ONLY the JSON object (no prose).
 """.strip()
 
-PROMPT_REPAIR2 = """
-Your updated JSON IR failed validation or bbox check.
-
-Validation errors (if any):
-{errors}
-
-BBox mismatch (if any):
-{bbox_error}
-
-Please return a corrected JSON IR that:
-- Sets program.bblock.l,w,h EXACTLY to the real bbox: ({L},{W},{H})
-- Rescales each cuboid's (l,w,h) by axiswise factors (L/L0, W/W0, H/H0) from the OLD bblock you used.
-- Keeps attach coordinates unchanged in [0,1]; avoid adding/removing parts unless essential.
-Return ONLY the JSON object (no prose).
-""".strip()
 
 
 PROMPT_STEP3_TRANSLATE = """
@@ -449,6 +415,50 @@ def repair_step3_translate(bad_ir: Dict[str, Any], errors: str) -> Dict[str, Any
     )
     return _extract_json(resp.choices[0].message.content or "")
 
+
+# ---------- deterministic_step2 - rescaling ----------
+
+def deterministic_step2(step1_ir: Dict[str, Any], info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deterministically rescale all cuboid (l,w,h) using the real bbox from info.json.
+    - Reads (L,W,H) via bbox_from_info(info).
+    - Scales each cuboid's (l,w,h) by (L/L0, W/W0, H/H0) where (L0,W0,H0) are old program.bblock dims.
+    - Leaves attach/squeeze/reflect/translate untouched.
+    - Sets program.bblock to the real (L,W,H).
+    """
+    # Deep copy to avoid mutating the input
+    ir = json.loads(json.dumps(step1_ir))
+    L, W, H = bbox_from_info(info)
+
+    # Old bbox from Step-1
+    try:
+        bb0 = ir["program"]["bblock"]
+        L0, W0, H0 = float(bb0["l"]), float(bb0["w"]), float(bb0["h"])
+    except Exception as e:
+        raise ValueError(f"Invalid Step-1 IR bblock: {e}")
+
+    def safe_div(n: float, d: float) -> float:
+        if abs(d) < 1e-12:
+            # If the old bbox had a zero dimension, fall back to factor 1.0 to avoid NaN.
+            # (Alternatively, you could raise an error here if you prefer hard failure.)
+            return 1.0
+        return n / d
+
+    sx, sy, sz = safe_div(L, L0), safe_div(W, W0), safe_div(H, H0)
+
+    # Update top-level bbox
+    bb0["l"], bb0["w"], bb0["h"] = float(L), float(W), float(H)
+
+    # Rescale all cuboids
+    for c in ir["program"].get("cuboids", []):
+        c["l"] = float(c["l"]) * sx
+        c["w"] = float(c["w"]) * sy
+        c["h"] = float(c["h"]) * sz
+        # keep 'aligned' as-is
+
+    # Attach/squeeze/reflect/translate remain unchanged (normalized coords).
+    return ir
+
 # ---------- Main ----------
 def main():
     ap = argparse.ArgumentParser()
@@ -483,20 +493,16 @@ def main():
     print(emit_shapeassembly(ir1))
     print("\n====================================================================\n")
 
-    # --- Step 2: refine using real bbox from info.json ---
+    # --- Step 2: deterministic refine using real bbox from info.json ---
     L, W, H = bbox_from_info(info)  # robust to your info.json structure
-    ir2 = call_step2(ir1, info)
-    bbox_err = check_bbox_matches(ir2, (L,W,H))
+    ir2 = deterministic_step2(ir1, info)
     try:
         validate_ir(ir2)
+        bbox_err = check_bbox_matches(ir2, (L, W, H))
         if bbox_err:
-            raise ValueError(bbox_err)
+            raise SystemExit(f"BBox mismatch after deterministic rescale: {bbox_err}")
     except Exception as e2:
-        ir2 = repair_step2(ir2, info, str(e2), bbox_err or "", L, W, H)
-        validate_ir(ir2)
-        bbox_err2 = check_bbox_matches(ir2, (L,W,H))
-        if bbox_err2:
-            raise SystemExit(f"BBox mismatch after repair: {bbox_err2}")
+        raise SystemExit(f"Step-2 deterministic validation error: {e2}")
 
     # --- Step 3: translate-only instancing via API ---
     ir3 = call_step3_translate(ir2)

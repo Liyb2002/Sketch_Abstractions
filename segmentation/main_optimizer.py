@@ -17,7 +17,7 @@ from pathlib import Path
 import json
 
 from program_executor import Executor
-from shape_optimizer import load_perturbed_feature_lines
+from shape_optimizer import load_perturbed_feature_lines, compute_sdf_metrics, plot_strokes_and_program
 
 
 def run_once():
@@ -37,7 +37,10 @@ def run_once():
     print(f"✅ Wrote {out_stl}  (faces: {len(mesh.faces)}, verts: {len(mesh.vertices)})")
 
     # ---- Step 2: Load pre-sampled 3D strokes
-    strokes = load_perturbed_feature_lines(input_dir)
+    sample_points, feature_lines = load_perturbed_feature_lines(input_dir)
+    _ = compute_sdf_metrics(exe, sample_points, feature_lines, margin=0.01)
+
+    
 
 
 if __name__ == "__main__":
