@@ -212,7 +212,7 @@ Global constraints:
 - Grounding: The very first attach must involve 'bbox'. After an attach, both endpoints are grounded.
 - Keep the program minimal but valid; avoid overlaps when possible; keep 'aligned' = true unless contradicted.
 - If scene size is unknown, set bbox l=w=h=1.0.
-
+- Strict non-overlap requirement: The axis-aligned bounding boxes of all cuboids must be pairwise disjoint within the bbox’s normalized space. No touching or intersection is allowed.
 About the provided `components` JSON (authoritative; may describe ANY object, not only chairs):
 - It can be one of:
   1) ["partA","partB","leg","leg", ...]                  # list of names (duplicates imply count)
