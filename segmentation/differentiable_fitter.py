@@ -41,6 +41,9 @@ Tensor = torch.Tensor
 # ----------------------- Basic helpers -----------------------
 
 def flatten_points(sample_points: List[List[List[float]]]) -> Tensor:
+    """
+    Flatten a list of per-stroke 3D samples into a single (M,3) tensor.
+    """
     pts = []
     for stroke in sample_points:
         for p in stroke:
@@ -49,6 +52,36 @@ def flatten_points(sample_points: List[List[List[float]]]) -> Tensor:
     if not pts:
         return torch.empty(0, 3)
     return torch.tensor(pts, dtype=torch.float32)
+
+
+def flatten_points_with_masks(
+    sample_points: List[List[List[float]]],
+    feature_lines: List[List[float]],
+    edge_types: Tuple[int, ...] = (1,)  # stroke type ids to include in EDGE loss
+) -> Tuple[Tensor, Tensor]:
+    """
+    Flattens sample_points (list per stroke) and builds a boolean mask indicating
+    which per-point samples belong to strokes whose type is in `edge_types`.
+    Assumes order-alignment between feature_lines and sample_points.
+    Returns:
+      pts: (M,3) float32
+      mask_edge: (M,) bool
+    """
+    pts = []
+    mask = []
+
+    for fl, stroke_pts in zip(feature_lines, sample_points):
+        t = int(fl[-1]) if isinstance(fl, list) and len(fl) >= 1 else -1
+        is_edge_like = (t in edge_types)
+        for p in stroke_pts:
+            if isinstance(p, (list, tuple)) and len(p) == 3:
+                pts.append([float(p[0]), float(p[1]), float(p[2])])
+                mask.append(is_edge_like)
+
+    if not pts:
+        return torch.empty(0, 3), torch.empty(0, dtype=torch.bool)
+
+    return torch.tensor(pts, dtype=torch.float32), torch.tensor(mask, dtype=torch.bool)
 
 
 def build_band_weight(feature_lines: List[List[float]]) -> float:
@@ -174,37 +207,6 @@ class DifferentiableExecutor(nn.Module):
 
 # ----------------------- Distances: surface & edges -----------------------
 
-def sdf_to_box(points: Tensor, origin: Tensor, size: Tensor) -> Tensor:
-    """
-    Signed distance from points (...,3) to axis-aligned box defined by min=origin, size.
-    Negative inside, positive outside.
-    """
-    center = origin + 0.5 * size
-    half = 0.5 * size
-    d = torch.abs(points - center) - half
-    outside = torch.clamp(d, min=0.0)
-    dist_out = torch.linalg.norm(outside, dim=-1)
-    dist_in = torch.clamp(torch.max(d, dim=-1).values, max=0.0)
-    return dist_out + dist_in  # signed
-
-
-def union_softmin(points: Tensor, boxes: Tensor, tau: float = 0.02) -> Tensor:
-    """
-    Soft minimum SDF to union of boxes.
-    boxes: (N,6) with [x0,y0,z0,l,w,h]
-    returns (M,) distances for points (M,3).
-    """
-    if boxes.numel() == 0:
-        return torch.full((points.shape[0],), 1e3, device=points.device)
-    if boxes.dim() != 2 or boxes.size(-1) != 6:
-        raise ValueError(f"[boxes] expected (N,6), got {tuple(boxes.shape)}")
-    P = points[:, None, :]     # (M,1,3)
-    O = boxes[None, :, 0:3]    # (1,N,3)
-    S = boxes[None, :, 3:6]    # (1,N,3)
-    d = sdf_to_box(P, O, S)    # (M,N)
-    v = -d / tau
-    return -tau * torch.logsumexp(v, dim=1)
-
 
 def _dist_point_to_segments(points: torch.Tensor, segs: torch.Tensor) -> torch.Tensor:
     """
@@ -305,15 +307,19 @@ def run_differentiable_fit(input_dir: Path,
     dex = DifferentiableExecutor(ir, device=device).to(device)
     opt = torch.optim.Adam(dex.parameters(), lr=lr)
 
-    # Prepare stroke points
-    pts = flatten_points(sample_points).to(device)
-    if pts.numel() == 0:
+    # Prepare all points + boolean mask for edge-loss points
+    # By default, only straight lines (type 1) contribute to the edge snapping loss.
+    pts_all, mask_edge = flatten_points_with_masks(sample_points, feature_lines, edge_types=(1,))
+    pts_all = pts_all.to(device)
+    mask_edge = mask_edge.to(device)
+
+    if pts_all.numel() == 0:
         print("No sample points found; skipping optimization.")
         return Executor(ir)
 
-    # Weights
-    w_band = build_band_weight(feature_lines)
-    band_cap = 0.003
+    pts_edge = pts_all[mask_edge]
+    if pts_edge.numel() == 0:
+        print("⚠️ No points matched edge_types for edge loss; edge term will be skipped.")
 
     # Optimize translations
     for step in range(steps):
@@ -322,27 +328,20 @@ def run_differentiable_fit(input_dir: Path,
         placed = dex()
         boxes = dex.pack_boxes(placed, skip_bbox=True)  # (N,6)
 
-        # Main objective: snap strokes to cuboid EDGES
-        d_edge = union_softmin_edges(pts, boxes, tau=0.02)   # (M,)
-        loss_edge = d_edge.mean()
+        # Main objective: snap selected strokes' points to cuboid EDGES
+        if pts_edge.numel() > 0:
+            d_edge = union_softmin_edges(pts_edge, boxes, tau=0.02)   # (Me,)
+            loss_edge = d_edge.mean()
+        else:
+            loss_edge = torch.tensor(0.0, device=device)
 
-        # Light symmetric surface band for stability (doesn't favor fat boxes)
-        d_surf = union_softmin(pts, boxes, tau=0.02)         # (M,)
-        loss_band = d_surf.abs().clamp_max(band_cap).mean()
-
-        # Translation regularization (keep offsets small)
-        reg_trans = torch.tensor(0.0, device=device)
-        for name, par in dex._dorigin.items():
-            reg_trans = reg_trans + (par * par).mean()
-        reg_trans = 1e-2 * reg_trans
-
-        loss = 1.0 * loss_edge + w_band * loss_band + reg_trans
+        loss = 1.0 * loss_edge
         loss.backward()
         opt.step()
 
         if step % 20 == 0 or step == steps - 1:
             print(f"[fit-T] step {step:03d} | "
-                  f"loss={loss.item():.6f}  edge={loss_edge.item():.6f}  band={loss_band.item():.6f}  regT={reg_trans.item():.6f}")
+                  f"loss={loss.item():.6f}  edge={loss_edge.item():.6f} ")
 
     # ---- Save learned translations (sidecar JSON) ----
     with torch.no_grad():
@@ -356,5 +355,3 @@ def run_differentiable_fit(input_dir: Path,
 
     # Return a fresh classic Executor (unmodified IR)
     return Executor(ir)
-
-
