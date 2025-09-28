@@ -377,14 +377,14 @@ def _print_diagnostics(tag: str,
     def fmt(v): return f"[{v[0]:.6f}, {v[1]:.6f}, {v[2]:.6f}]"
     Ls = (strokes_max[0]-strokes_min[0], strokes_max[1]-strokes_min[1], strokes_max[2]-strokes_min[2])
     Lg = (geom_max[0]-geom_min[0],       geom_max[1]-geom_min[1],       geom_max[2]-geom_min[2])
-    print(f"\n===== BBOX DIAGNOSTICS ({tag}) =====")
-    print(f"Strokes  min: {fmt(strokes_min)}   max: {fmt(strokes_max)}   size: {fmt(Ls)}")
-    print(f"Geometry min: {fmt(geom_min)}     max: {fmt(geom_max)}     size: {fmt(Lg)}")
+    # print(f"\n===== BBOX DIAGNOSTICS ({tag}) =====")
+    # print(f"Strokes  min: {fmt(strokes_min)}   max: {fmt(strokes_max)}   size: {fmt(Ls)}")
+    # print(f"Geometry min: {fmt(geom_min)}     max: {fmt(geom_max)}     size: {fmt(Lg)}")
     dmin = (geom_min[0]-strokes_min[0], geom_min[1]-strokes_min[1], geom_min[2]-strokes_min[2])
     dmax = (geom_max[0]-strokes_max[0], geom_max[1]-strokes_max[1], geom_max[2]-strokes_max[2])
-    print(f"Δmin (geom - strokes): {fmt(dmin)}")
-    print(f"Δmax (geom - strokes): {fmt(dmax)}")
-    print("====================================\n")
+    # print(f"Δmin (geom - strokes): {fmt(dmin)}")
+    # print(f"Δmax (geom - strokes): {fmt(dmax)}")
+    # print("====================================\n")
 
 
 # ---------- Public API ----------
