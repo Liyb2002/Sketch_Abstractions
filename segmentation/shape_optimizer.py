@@ -308,15 +308,19 @@ def plot_strokes_and_program(executor, sample_points, feature_lines=None, use_op
 
 
 
-def compare_optimized_programs(executor, use_offsets=True):
+def compare_optimized_programs(executor, use_offsets=True, use_scales=True):
     """
-    Plot program cuboid edges before (black) and after applying optimized translations (red).
+    Plot program cuboid edges before (black) and after applying optimized
+    translations + scales (red).
     - executor: a program_executor.Executor instance
-    - use_offsets: if True, loads fit_translations.json and applies its offsets
+    - use_offsets: if True, loads fit_translations.json and applies offsets
+    - use_scales: if True, loads fit_scales.json and applies scales
     Returns (fig, ax).
     """
     import json
     from pathlib import Path
+    import numpy as np
+    import matplotlib.pyplot as plt
 
     fig = plt.figure(figsize=(8, 7))
     ax = fig.add_subplot(111, projection="3d")
@@ -325,21 +329,32 @@ def compare_optimized_programs(executor, use_offsets=True):
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    # ---- load optimized offsets
-    offsets = {}
-    if use_offsets:
+    # ---- load optimized offsets & scales
+    offsets, scales = {}, {}
+    if use_offsets or use_scales:
         ir_path = getattr(executor, "ir_path", None)
         if ir_path is None:
             input_dir = Path.cwd().parent / "input"
         else:
             input_dir = Path(ir_path).parent
-        trans_file = input_dir / "fit_translations.json"
-        if trans_file.exists():
-            try:
-                data = json.loads(trans_file.read_text())
-                offsets = data.get("offsets_xyz", {})
-            except Exception as e:
-                print(f"[warn] Failed to load translations: {e}")
+
+        if use_offsets:
+            trans_file = input_dir / "fit_translations.json"
+            if trans_file.exists():
+                try:
+                    data = json.loads(trans_file.read_text())
+                    offsets = data.get("offsets_xyz", {})
+                except Exception as e:
+                    print(f"[warn] Failed to load translations: {e}")
+
+        if use_scales:
+            scale_file = input_dir / "fit_scales.json"
+            if scale_file.exists():
+                try:
+                    data = json.loads(scale_file.read_text())
+                    scales = data.get("scales_lwh", {})
+                except Exception as e:
+                    print(f"[warn] Failed to load scales: {e}")
 
     # ---- original program (black)
     for name, inst in executor.instances.items():
@@ -354,21 +369,26 @@ def compare_optimized_programs(executor, use_offsets=True):
             )
 
     # ---- optimized program (red)
-    if offsets:
+    if offsets or scales:
         for name, inst in executor.instances.items():
             if name == "bbox":
                 continue
+            # start with original
             o = inst.T[:3, 3].copy()
+            s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
+            # apply offset if available
             if name in offsets:
                 o = o + np.array(offsets[name], dtype=float)
-            s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
+            # apply scale if available
+            if name in scales:
+                s = s * np.array(scales[name], dtype=float)
             for (p0, p1) in _cuboid_edges_from_origin_size(o, s):
                 ax.plot(
                     [p0[0], p1[0]], [p0[1], p1[1]], [p0[2], p1[2]],
                     "-", color="red", linewidth=1.2, alpha=0.9
                 )
     else:
-        print("[info] No optimized translations found; only original program is shown.")
+        print("[info] No optimized translations/scales found; only original program is shown.")
 
     # ---- axis scaling: full bbox, equal aspect cube
     L, W, H = executor.bbox.l, executor.bbox.w, executor.bbox.h

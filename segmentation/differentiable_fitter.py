@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-differentiable_fitter.py  (translation-only)
+differentiable_fitter.py  (translation + scaling)
 
-Optimize ONLY per-part world translations (no size changes) to fit 3D stroke samples.
-- Keeps l,w,h fixed exactly as in ../input/sketch_program_ir.json
+Optimize per-part world translations and per-axis log-scales to fit 3D stroke samples.
+- Sizes are size0 * exp(log_scale) (kept positive via exp)
 - Fits strokes to the union of cuboid EDGES (good for wireframe strokes)
-- Saves learned per-part offsets to ../input/fit_translations.json
+- Saves learned per-part offsets to ../input/fit_translations.json (unchanged)
+- Also saves learned per-part scales to ../input/fit_scales.json  (new)
 - Does NOT modify the IR on disk (no size or anchor edits)
 
 Inputs:
@@ -20,9 +21,9 @@ Conventions:
 - feature_lines[-1] is a type id: 1 line, 2 circle, 3 cylinder face, 4 arc, 5 spline, 6 sphere
 
 Notes:
-- Attach graph is respected; we only add small learnable world offsets per prototype part.
-- Translate-array copies inherit the prototype's learned offset.
-- If you want me to also bake these offsets back into the IR (anchors or extra translate ops), ping me.
+- Attach graph is respected; we apply sizes as size0 * exp(log_scale) everywhere they appear.
+- Translate-array copies inherit the prototype's learned offset and scale.
+- Loss: ONLY the edge snapping loss (no extra terms).
 """
 
 from __future__ import annotations
@@ -84,21 +85,12 @@ def flatten_points_with_masks(
     return torch.tensor(pts, dtype=torch.float32), torch.tensor(mask, dtype=torch.bool)
 
 
-def build_band_weight(feature_lines: List[List[float]]) -> float:
-    """
-    Slightly increase the surface band term if closed-ish primitives are present.
-    """
-    type_ids = [int(st[-1]) for st in feature_lines if isinstance(st, list) and len(st) >= 1]
-    closed_like = any(t in (2, 3, 6) for t in type_ids)  # circle, cylinder-face, sphere
-    return 0.35 if closed_like else 0.25
-
-
-# ----------------------- Differentiable executor (translation-only) -----------------------
+# ----------------------- Differentiable executor (T + S) -----------------------
 
 class DifferentiableExecutor(nn.Module):
     """
-    Materializes part placements from the IR, then adds learnable world offsets per prototype part.
-    Sizes (l,w,h) are constants from the IR; ONLY translations are learnable.
+    Materializes part placements from the IR, with learnable world offsets and per-axis log-scales.
+    Sizes are size0 * exp(log_scale). Scaling pivot is the part's min-corner (consistent with attach math).
     """
     def __init__(self, ir: Dict, device: str = "cpu"):
         super().__init__()
@@ -106,9 +98,9 @@ class DifferentiableExecutor(nn.Module):
         self.bb = self.P["bblock"]
         self.device = torch.device(device)
 
-        # Fixed sizes per named cuboid (exclude bbox)
+        # Fixed base sizes per named cuboid (exclude bbox)
         self.part_names: List[str] = [c["var"] for c in self.P.get("cuboids", [])]
-        self.size_const = {
+        self.size_base = {
             c["var"]: torch.tensor([float(c["l"]), float(c["w"]), float(c["h"])],
                                    dtype=torch.float32, device=self.device)
             for c in self.P.get("cuboids", [])
@@ -120,28 +112,38 @@ class DifferentiableExecutor(nn.Module):
             for name in self.part_names
         })
 
+        # Learnable per-part per-axis log-scale (prototype-level; copies inherit)
+        # Actual size = size_base * exp(log_scale)
+        self._dlogscale = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(3, dtype=torch.float32, device=self.device))
+            for name in self.part_names
+        })
+
     def sizes(self, name: str) -> Tensor:
         if name == "bbox":
             return torch.tensor([float(self.bb["l"]), float(self.bb["w"]), float(self.bb["h"])],
                                 dtype=torch.float32, device=self.device)
-        return self.size_const[name]
+        # size = size_base * exp(log_scale)
+        base = self.size_base[name]
+        if name in self._dlogscale:
+            return base * torch.exp(self._dlogscale[name])
+        return base
 
     def _apply_offset(self, name: str, origin: Tensor) -> Tensor:
-        # Only real prototype parts receive learnable offsets
         if name in self._dorigin:
             return origin + self._dorigin[name]
         return origin
 
     def forward(self) -> Dict[str, Tuple[Tensor, Tensor]]:
         """
-        Execute attach -> translate-array (axis-aligned, translation only).
+        Execute attach -> translate-array with current translations & scales.
         Returns dict name -> (origin[min], size). Includes bbox.
         """
         out: Dict[str, Tuple[Tensor, Tensor]] = {}
         bb_min = torch.tensor(self.bb.get("min", [0.0, 0.0, 0.0]), dtype=torch.float32, device=self.device)
         out["bbox"] = (bb_min, self.sizes("bbox"))
 
-        # Attach multi-pass (grounded by bbox)
+        # Attach multi-pass (grounded by bbox). Uses scaled sizes.
         pending = list(self.P.get("attach", []))
         last_len = None
         while pending and last_len != len(pending):
@@ -149,15 +151,16 @@ class DifferentiableExecutor(nn.Module):
             next_p = []
             for a in pending:
                 A, B = a["a"], a["b"]
-                x1, y1, z1, x2, y2, z2 = [torch.tensor(float(a[k]), device=self.device) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+                x1, y1, z1, x2, y2, z2 = [torch.tensor(float(a[k]), device=self.device)
+                                          for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
                 if A in out and B in out:
                     continue
                 elif B in out:
                     oB, sB = out[B]
                     sA = self.sizes(A)
-                    pB = oB + sB * torch.stack([x2, y2, z2])
-                    pA = sA * torch.stack([x1, y1, z1])
-                    oA = pB - pA
+                    pB = oB + sB * torch.stack([x2, y2, z2])  # anchor point on B (scaled)
+                    pA = sA * torch.stack([x1, y1, z1])       # anchor on A (scaled)
+                    oA = pB - pA                               # min corner of A
                     out[A] = (self._apply_offset(A, oA), sA)
                 elif A in out:
                     oA, sA = out[A]
@@ -172,7 +175,7 @@ class DifferentiableExecutor(nn.Module):
         if pending:
             raise RuntimeError(f"Unresolved attaches (grounding order violated): {pending}")
 
-        # Translate arrays (explicit copies share prototype offset)
+        # Translate arrays (explicit copies share prototype offset & scale)
         copies: List[Tuple[str, Tensor, Tensor]] = []
         for t in self.P.get("translate", []):
             src = t["c"]; axis = t["axis"].upper(); n = int(t["n"]); d = float(t["d"])
@@ -189,10 +192,12 @@ class DifferentiableExecutor(nn.Module):
                 copies.append((nm, oS + offset, sS))
         for nm, oC, sC in copies:
             proto = nm.split("_T")[0]
+            # Inherit prototype translation & scale
             if proto in self._dorigin:
-                out[nm] = (oC + self._dorigin[proto], sC)
-            else:
-                out[nm] = (oC, sC)
+                oC = oC + self._dorigin[proto]
+            if proto in self._dlogscale:
+                sC = self.size_base[proto] * torch.exp(self._dlogscale[proto])
+            out[nm] = (oC, sC)
 
         return out
 
@@ -206,7 +211,6 @@ class DifferentiableExecutor(nn.Module):
 
 
 # ----------------------- Distances: surface & edges -----------------------
-
 
 def _dist_point_to_segments(points: torch.Tensor, segs: torch.Tensor) -> torch.Tensor:
     """
@@ -292,9 +296,9 @@ def run_differentiable_fit(input_dir: Path,
                            steps: int = 200,
                            lr: float = 1e-2) -> Executor:
     """
-    Optimize per-part translations to fit stroke samples to edges.
-    DOES NOT modify sizes; IR on disk is left unchanged.
-    Writes learned offsets to ../input/fit_translations.json.
+    Optimize per-part translations AND per-axis scales to fit stroke samples to edges.
+    Writes learned offsets to ../input/fit_translations.json  (unchanged)
+    Writes learned scales  to ../input/fit_scales.json        (new; multiplicative factors)
     Returns a fresh program_executor.Executor for the original IR.
     """
     ir_path = input_dir / "sketch_program_ir.json"
@@ -307,8 +311,7 @@ def run_differentiable_fit(input_dir: Path,
     dex = DifferentiableExecutor(ir, device=device).to(device)
     opt = torch.optim.Adam(dex.parameters(), lr=lr)
 
-    # Prepare all points + boolean mask for edge-loss points
-    # By default, only straight lines (type 1) contribute to the edge snapping loss.
+    # Prepare all points + boolean mask for edge-loss points (only straight lines)
     pts_all, mask_edge = flatten_points_with_masks(sample_points, feature_lines, edge_types=(1,))
     pts_all = pts_all.to(device)
     mask_edge = mask_edge.to(device)
@@ -321,37 +324,46 @@ def run_differentiable_fit(input_dir: Path,
     if pts_edge.numel() == 0:
         print("⚠️ No points matched edge_types for edge loss; edge term will be skipped.")
 
-    # Optimize translations
     for step in range(steps):
         opt.zero_grad()
 
         placed = dex()
         boxes = dex.pack_boxes(placed, skip_bbox=True)  # (N,6)
 
-        # Main objective: snap selected strokes' points to cuboid EDGES
+        # ONLY the edge snapping loss
         if pts_edge.numel() > 0:
             d_edge = union_softmin_edges(pts_edge, boxes, tau=0.02)   # (Me,)
             loss_edge = d_edge.mean()
         else:
             loss_edge = torch.tensor(0.0, device=device)
 
-        loss = 1.0 * loss_edge
+        loss = loss_edge
         loss.backward()
         opt.step()
 
         if step % 20 == 0 or step == steps - 1:
-            print(f"[fit-T] step {step:03d} | "
+            print(f"[fit-TS] step {step:03d} | "
                   f"loss={loss.item():.6f}  edge={loss_edge.item():.6f} ")
 
-    # ---- Save learned translations (sidecar JSON) ----
+    # ---- Save learned translations & scales (sidecar JSONs) ----
     with torch.no_grad():
         offsets = {k: dex._dorigin[k].detach().cpu().tolist() for k in dex.part_names}
-    sidecar = {
+        # multiplicative scales = exp(log_scale)
+        scales = {k: torch.exp(dex._dlogscale[k]).detach().cpu().tolist() for k in dex.part_names}
+
+    sidecar_T = {
         "note": "per-part world translation offsets (prototype-level). Copies inherit prototype offset.",
         "offsets_xyz": offsets,
     }
-    (input_dir / "fit_translations.json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
+    (input_dir / "fit_translations.json").write_text(json.dumps(sidecar_T, indent=2), encoding="utf-8")
     print(f"✅ Saved learned translations to {(input_dir / 'fit_translations.json')}")
+
+    sidecar_S = {
+        "note": "per-part multiplicative scales per axis (prototype-level). Copies inherit prototype scale.",
+        "scales_lwh": scales,  # corresponds to [l_scale, w_scale, h_scale]
+    }
+    (input_dir / "fit_scales.json").write_text(json.dumps(sidecar_S, indent=2), encoding="utf-8")
+    print(f"✅ Saved learned scales to {(input_dir / 'fit_scales.json')}")
 
     # Return a fresh classic Executor (unmodified IR)
     return Executor(ir)

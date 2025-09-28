@@ -219,6 +219,21 @@ Global constraints:
 - If scene size is unknown, set bbox l=w=h=1.0.
 - Make sure no components should overlap in 3D space.
 
+Authoring rules for attaches (exact ShapeAssembly, point-to-point):
+- You always specify the child’s anchor (x1,y1,z1) and the parent’s anchor (x2,y2,z2) as fractions from each part’s **min corner**.
+- When attaching the child A to the **BOTTOM** face of parent B (B’s z2 near 0), set **A.z1 = 1.0** (A’s TOP) so A extends downward from the joint.
+- When attaching A to the **TOP** face of B (B’s z2 near 1), set **A.z1 = 0.0** (A’s BOTTOM).
+- When attaching A to the **LEFT** face of B (B’s x2 near 0), set **A.x1 = 1.0** (A’s RIGHT).
+- When attaching A to the **RIGHT** face of B (B’s x2 near 1), set **A.x1 = 0.0** (A’s LEFT).
+- When attaching A to the **FRONT** face of B (B’s y2 near 0), set **A.y1 = 1.0** (A’s BACK).
+- When attaching A to the **BACK** face of B (B’s y2 near 1), set **A.y1 = 0.0** (A’s FRONT).
+- “Near” can be interpreted as ≤ 0.2 from the respective face unless otherwise needed to avoid overlaps.
+- Do not invent rotations or flips; this is pure point-to-point ShapeAssembly semantics.
+- Unless intentionally offset, attach by the child's top-center on the contact face:
+  set (x1,y1) = (0.5,0.5) when attaching under a parent face.
+- For repeated symmetric parts, choose parent anchor fractions that are uniformly spaced
+  across the parent extent so that translate can be inferred (e.g., 0.15 and 0.85 for 2 items).
+
 About the provided `components` JSON (authoritative; may describe ANY object, not only chairs):
 - It can be one of:
   1) ["partA","partB","leg","leg", ...]                  # list of names (duplicates imply count)
@@ -309,18 +324,6 @@ def _basename(var: str) -> str:
 def _has_trailing_digits(var: str) -> bool:
     return _TRAILING_DIGITS.search(var) is not None
 
-def _anchor_to_bbox(attach_list: List[Dict[str,Any]], var: str) -> Optional[Tuple[float,float,float]]:
-    """
-    Return the normalized (x,y,z) anchor of `var` relative to bbox from an attach involving bbox.
-    If multiple attaches to bbox exist, prefer the first. If none, return None.
-    """
-    for a in attach_list:
-        a_name, b_name = str(a["a"]), str(a["b"])
-        if a_name == var and b_name == "bbox":
-            return (float(a["x1"]), float(a["y1"]), float(a["z1"]))
-        if a_name == "bbox" and b_name == var:
-            return (float(a["x2"]), float(a["y2"]), float(a["z2"]))
-    return None
 
 def _is_uniform_progression(vals: List[float], tol: float=1e-6) -> Tuple[bool, float]:
     """
@@ -338,31 +341,109 @@ def _is_uniform_progression(vals: List[float], tol: float=1e-6) -> Tuple[bool, f
             return False, 0.0
     return True, step
 
-def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float=1e-6) -> Dict[str, Any]:
+def _parent_anchor_for(var: str, attach_list: List[Dict[str,Any]]) -> Optional[Tuple[str, Tuple[float,float,float]]]:
     """
-    Deterministic translate-only instancing:
-      - Find groups like baseName + digits (leg1..leg4) with identical (l,w,h,aligned).
-      - Require each member to have an anchor attach to bbox.
-      - If members fall on a uniform grid along X/Y/Z:
-          * Keep one prototype at the minimal (x,y,z)
-          * Remove others and their attaches
-          * Emit translate ops on axes with n>1 and d>0
-      - If any condition fails, leave the group as-is.
+    Return (parent_name, (x_parent,y_parent,z_parent)) from the FIRST attach that involves `var`.
+    If var is on 'a' side, parent is 'b' and we return (x2,y2,z2).
+    If var is on 'b' side, parent is 'a' and we return (x1,y1,z1).
     """
-    ir = json.loads(json.dumps(ir_in))  # deep copy
-    P = ir["program"]
-    cuboids: List[Dict[str,Any]] = P.get("cuboids", [])
-    attaches: List[Dict[str,Any]] = P.get("attach", [])
-    translates: List[Dict[str,Any]] = P.setdefault("translate", [])
+    for a in attach_list:
+        if a["a"] == var:
+            return a["b"], (float(a["x2"]), float(a["y2"]), float(a["z2"]))
+        if a["b"] == var:
+            return a["a"], (float(a["x1"]), float(a["y1"]), float(a["z1"]))
+    return None
 
-    # index sizes
-    size_by_var = {
+def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> Dict[str, Any]:
+    """
+    Deterministic translate-only instancing (program-agnostic, robust).
+
+    Key change vs. the earlier version:
+      - Detect arrays using the **PARENT-SIDE** anchor fractions from the first attach
+        of each member (and require a common parent). This reflects how programs are
+        usually authored: the child-side anchor is constant (e.g., top-center), while
+        the parent-side varies across the parent surface.
+      - If those parent-side anchors form a uniform grid along X/Y/Z (in normalized
+        fractions), compress the instances into translate ops (n includes the prototype).
+
+    Steps:
+      1) Group candidates by (basename with trailing digits removed) + identical (l,w,h,aligned).
+      2) For each group, for each member:
+         - Find the FIRST attach it appears in.
+         - Extract (parent_name, parent-side fractions).
+         - Require all members share the SAME parent.
+      3) Build deltas to the lexicographically minimal member (by parent-side (x,y,z)).
+         - Check each axis for uniform spacing; collect unique values along each axis.
+         - Require exact cartesian coverage of the grid.
+      4) Emit translate ops for axes with >1 unique value. Remove non-prototype members and
+         their references (attach/squeeze/reflect/translate).
+      5) Return a deep-copied, edited IR.
+
+    Notes:
+      - `d` is emitted in *normalized bbox units* (same coordinate system as anchors).
+      - We round anchors to a few decimals before set/diff checks to de-noise tiny drift.
+    """
+    # ---- local helpers (standalone; do not depend on outer file helpers) ----
+    import json as _json
+    import re as _re
+
+    def _has_trailing_digits(var: str) -> bool:
+        return _re.search(r"(\d+)$", var) is not None
+
+    def _basename(var: str) -> str:
+        m = _re.search(r"(\d+)$", var)
+        return var[:m.start()] if m else var
+
+    def _is_uniform_progression(vals: List[float], tol: float = 1e-6) -> Tuple[bool, float]:
+        """
+        Given sorted unique vals (should include 0 for the prototype), check equal spacing.
+        Returns (ok, step). If <=1 value, ok=True, step=0.
+        """
+        if len(vals) <= 1:
+            return True, 0.0
+        diffs = [vals[i + 1] - vals[i] for i in range(len(vals) - 1)]
+        step = sum(diffs) / len(diffs)
+        if step <= tol:
+            return False, 0.0
+        for d in diffs:
+            if abs(d - step) > tol:
+                return False, 0.0
+        return True, step
+
+    def _parent_anchor_for(var: str, attach_list: List[Dict[str, Any]]) -> Optional[Tuple[str, Tuple[float, float, float]]]:
+        """
+        Return (parent_name, (x_parent,y_parent,z_parent)) from the FIRST attach that involves `var`.
+        If var is on 'a' side, parent is 'b' and we return (x2,y2,z2). If var is on 'b' side,
+        parent is 'a' and we return (x1,y1,z1).
+        """
+        for a in attach_list:
+            if a["a"] == var:
+                return a["b"], (float(a["x2"]), float(a["y2"]), float(a["z2"]))
+            if a["b"] == var:
+                return a["a"], (float(a["x1"]), float(a["y1"]), float(a["z1"]))
+        return None
+
+    def _round_frac3(t: Tuple[float, float, float], nd: int = 6) -> Tuple[float, float, float]:
+        return (round(t[0], nd), round(t[1], nd), round(t[2], nd))
+
+    # ---- deep copy IR so we don't mutate the caller's object ----
+    ir = _json.loads(_json.dumps(ir_in))
+    P = ir["program"]
+    cuboids: List[Dict[str, Any]] = P.get("cuboids", [])
+    attaches: List[Dict[str, Any]] = P.get("attach", [])
+    translates_existing: List[Dict[str, Any]] = P.setdefault("translate", [])
+
+    if not cuboids or not attaches:
+        return ir
+
+    # index sizes (must match within tiny tolerance; we treat as exact floats from the IR)
+    size_by_var: Dict[str, Tuple[float, float, float, bool]] = {
         c["var"]: (float(c["l"]), float(c["w"]), float(c["h"]), bool(c.get("aligned", True)))
         for c in cuboids
     }
 
-    # group candidates: basename + identical size + has trailing digits
-    groups: Dict[Tuple[str,Tuple[float,float,float,bool]], List[str]] = {}
+    # group by basename + identical size + has trailing digits
+    groups: Dict[Tuple[str, Tuple[float, float, float, bool]], List[str]] = {}
     for c in cuboids:
         var = c["var"]
         if not _has_trailing_digits(var):
@@ -373,91 +454,112 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float=1e-6) -> Dic
     if not groups:
         return ir  # nothing to do
 
-    cuboid_by_var = {c["var"]: c for c in cuboids}
-
     removed_vars_total: List[str] = []
-    new_translates: List[Dict[str,Any]] = []
+    new_translates: List[Dict[str, Any]] = []
 
     for (base, size), members in groups.items():
         if len(members) < 2:
             continue
 
-        # collect anchors
-        anchors: Dict[str, Tuple[float,float,float]] = {}
+        # Collect parent anchors and ensure a common parent for the group.
+        parent_by_member: Dict[str, str] = {}
+        anchor_by_member: Dict[str, Tuple[float, float, float]] = {}
         ok_group = True
+        common_parent: Optional[str] = None
+
         for v in members:
-            anch = _anchor_to_bbox(attaches, v)
-            if anch is None:
+            pa = _parent_anchor_for(v, attaches)
+            if pa is None:
                 ok_group = False
                 break
-            anchors[v] = anch
-        if not ok_group:
+            parent_name, parent_frac = pa
+            parent_by_member[v] = parent_name
+            anchor_by_member[v] = _round_frac3(parent_frac, nd=6)  # de-noise tiny float drift
+
+            if common_parent is None:
+                common_parent = parent_name
+            elif parent_name != common_parent:
+                ok_group = False
+                break
+
+        if not ok_group or common_parent is None:
             continue
 
-        # choose prototype at minimal (x,y,z) lexicographically
-        proto = min(members, key=lambda v: anchors[v])
-        axp, ayp, azp = anchors[proto]
+        # Choose prototype as the lexicographically minimal parent anchor (x,y,z).
+        proto = min(members, key=lambda v: anchor_by_member[v])
+        axp, ayp, azp = anchor_by_member[proto]
 
-        # compute deltas from proto
-        deltas = {v: (anchors[v][0]-axp, anchors[v][1]-ayp, anchors[v][2]-azp) for v in members}
+        # Deltas from proto (in normalized fractions).
+        deltas = {
+            v: (anchor_by_member[v][0] - axp,
+                anchor_by_member[v][1] - ayp,
+                anchor_by_member[v][2] - azp)
+            for v in members
+        }
 
-        # unique values along each axis (should include 0)
-        xs = sorted(set(round(d[0], 10) for d in deltas.values()))
-        ys = sorted(set(round(d[1], 10) for d in deltas.values()))
-        zs = sorted(set(round(d[2], 10) for d in deltas.values()))
+        # Unique values per axis (rounded again to be safe).
+        xs = sorted(set(round(d[0], 6) for d in deltas.values()))
+        ys = sorted(set(round(d[1], 6) for d in deltas.values()))
+        zs = sorted(set(round(d[2], 6) for d in deltas.values()))
 
-        # verify uniform progressions
+        # Each axis must be a uniform progression (may be length 1).
         okx, dx = _is_uniform_progression(xs, tol)
         oky, dy = _is_uniform_progression(ys, tol)
         okz, dz = _is_uniform_progression(zs, tol)
         if not (okx and oky and okz):
             continue
 
-        # verify full cartesian grid coverage
+        # Verify full cartesian coverage of the grid.
         expected_count = len(xs) * len(ys) * len(zs)
         if expected_count != len(members):
             continue
 
         grid = {(x, y, z) for x in xs for y in ys for z in zs}
-        if any((round(dxv,10), round(dyv,10), round(dzv,10)) not in grid for (dxv,dyv,dzv) in deltas.values()):
+        if any((round(dxv, 6), round(dyv, 6), round(dzv, 6)) not in grid for (dxv, dyv, dzv) in deltas.values()):
             continue
 
-        # build translate ops (n includes the prototype)
-        if len(xs) > 1 and dx > tol:
+        # Build translate ops (n includes the prototype). Only axes with >1 unique value and nonzero step.
+        if len(xs) > 1 and abs(dx) > tol:
             new_translates.append({"c": proto, "axis": "X", "n": len(xs), "d": float(dx)})
-        if len(ys) > 1 and dy > tol:
+        if len(ys) > 1 and abs(dy) > tol:
             new_translates.append({"c": proto, "axis": "Y", "n": len(ys), "d": float(dy)})
-        if len(zs) > 1 and dz > tol:
+        if len(zs) > 1 and abs(dz) > tol:
             new_translates.append({"c": proto, "axis": "Z", "n": len(zs), "d": float(dz)})
 
-        # mark all but the prototype for removal
+        # Mark all but the prototype for removal.
         to_remove = [v for v in members if v != proto]
         removed_vars_total.extend(to_remove)
 
+    # If nothing detected, return the input IR untouched.
     if not removed_vars_total and not new_translates:
         return ir
 
-    # 1) remove cuboids for removed vars
-    P["cuboids"] = [c for c in cuboids if c["var"] not in set(removed_vars_total)]
+    removed_set = set(removed_vars_total)
 
-    # 2) remove attaches that reference removed vars
-    P["attach"] = [a for a in attaches if a["a"] not in removed_vars_total and a["b"] not in removed_vars_total]
+    # 1) Remove cuboids for removed vars.
+    P["cuboids"] = [c for c in cuboids if c["var"] not in removed_set]
 
-    # 3) keep unrelated squeeze/reflect; drop ones that reference removed vars
+    # 2) Remove attaches that reference removed vars.
+    P["attach"] = [a for a in attaches if a["a"] not in removed_set and a["b"] not in removed_set]
+
+    # 3) Drop squeeze/reflect/translate entries that reference removed vars; keep unrelated ones.
     if "squeeze" in P:
-        P["squeeze"] = [s for s in P["squeeze"] if s["a"] not in removed_vars_total
-                        and s["b"] not in removed_vars_total and s["c"] not in removed_vars_total]
+        P["squeeze"] = [
+            s for s in P["squeeze"]
+            if s["a"] not in removed_set and s["b"] not in removed_set and s["c"] not in removed_set
+        ]
     if "reflect" in P:
-        P["reflect"] = [r for r in P["reflect"] if r["c"] not in removed_vars_total]
+        P["reflect"] = [r for r in P["reflect"] if r["c"] not in removed_set]
     if "translate" in P:
-        P["translate"] = [t for t in P["translate"] if t["c"] not in removed_vars_total]
+        P["translate"] = [t for t in P["translate"] if t["c"] not in removed_set]
     else:
         P["translate"] = []
 
-    # 4) append new translate arrays
+    # 4) Append new translate arrays (after pruning).
     P["translate"].extend(new_translates)
 
     return ir
+
 
 # ---------- Deterministic scaling (after Step-3) ----------
 def deterministic_scale_to_strokes_bbox(ir_in: Dict[str, Any], input_dir: Path) -> Dict[str, Any]:
