@@ -13,8 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 
-from rescaling_optimizer import rescale_and_execute
-from shape_optimizer import load_perturbed_feature_lines, plot_strokes_and_program
+from shape_optimizer import load_perturbed_feature_lines, plot_strokes_and_program, rescale_and_execute
 
 
 def run_once():
