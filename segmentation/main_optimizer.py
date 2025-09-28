@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 
+import shape_optimizer
 from shape_optimizer import load_perturbed_feature_lines, plot_strokes_and_program, rescale_and_execute
 from differentiable_fitter import run_differentiable_fit   # <— NEW
 
@@ -23,6 +24,7 @@ def run_once():
 
     # 2) Load strokes (points + typed feature_lines)
     sample_points, feature_lines = load_perturbed_feature_lines(input_dir)
+    # plot_strokes_and_program(exe, sample_points, feature_lines)
 
     # 3) Differentiable fitting: updates IR on disk and returns a fresh Executor
     exe = run_differentiable_fit(
@@ -39,8 +41,8 @@ def run_once():
     print(f"✅ Wrote {out_stl}  (faces: {len(mesh.faces)}, verts: {len(mesh.vertices)})")
 
     print("📈 Plotting (after differentiable fit) ...")
-    plot_strokes_and_program(exe, sample_points, feature_lines)
-
+    # plot_strokes_and_program(exe, sample_points, feature_lines, True)
+    shape_optimizer.compare_optimized_programs(exe)
 
 if __name__ == "__main__":
     run_once()

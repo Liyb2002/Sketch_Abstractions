@@ -206,14 +206,20 @@ def _cuboid_edges_from_origin_size(origin: np.ndarray, size: np.ndarray) -> List
     return E
 
 
-def plot_strokes_and_program(executor, sample_points, feature_lines=None):
+
+
+def plot_strokes_and_program(executor, sample_points, feature_lines=None, use_optimized=False):
     """
     Plot sampled strokes and program cuboid edges together in a clean view.
+    - If use_optimized=True, apply per-part translations from fit_translations.json.
     - Auto scales to show the full bbox.
     - Removes grid, ticks, labels, panes, and axis lines.
     - Avoids tight_layout() (problematic for 3D with no ticks/labels).
     Returns (fig, ax).
     """
+    import json
+    from pathlib import Path
+
     fig = plt.figure(figsize=(8, 7))
     ax = fig.add_subplot(111, projection="3d")
     ax.view_init(elev=22, azim=-62)
@@ -222,11 +228,30 @@ def plot_strokes_and_program(executor, sample_points, feature_lines=None):
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
+    # ---- optional optimized translations
+    offsets = {}
+    if use_optimized:
+        ir_path = getattr(executor, "ir_path", None)
+        if ir_path is None:
+            # fallback: assume ../input relative to CWD
+            input_dir = Path.cwd().parent / "input"
+        else:
+            input_dir = Path(ir_path).parent
+        trans_file = input_dir / "fit_translations.json"
+        if trans_file.exists():
+            try:
+                data = json.loads(trans_file.read_text())
+                offsets = data.get("offsets_xyz", {})
+            except Exception as e:
+                print(f"[warn] Failed to load translations: {e}")
+
     # ---- program cuboid edges
     for name, inst in executor.instances.items():
         if name == "bbox":
             continue
-        o = inst.T[:3, 3]
+        o = inst.T[:3, 3].copy()
+        if name in offsets:
+            o = o + np.array(offsets[name], dtype=float)  # apply learned offset
         s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
         for (p0, p1) in _cuboid_edges_from_origin_size(o, s):
             ax.plot(
@@ -263,27 +288,19 @@ def plot_strokes_and_program(executor, sample_points, feature_lines=None):
     ax.set_ylim(ymid - maxlen/2, ymid + maxlen/2)
     ax.set_zlim(zmid - maxlen/2, zmid + maxlen/2)
 
-    # (If you’re on Matplotlib >= 3.3) keep a true cube:
     try:
-        ax.set_box_aspect((1, 1, 1))
+        ax.set_box_aspect((1, 1, 1))  # keep a true cube (matplotlib >= 3.3)
     except Exception:
-        pass  # older Matplotlib
+        pass
 
     # ---- style cleanup
     ax.grid(False)
     ax.set_xlabel(""); ax.set_ylabel(""); ax.set_zlabel("")
-
-    # Remove background panes (gray planes)
     for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
         axis.pane.set_visible(False)
-        # also hide the axis line itself
         axis.line.set_visible(False)
-
-    # Remove ticks & labels
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.set_xticklabels([]); ax.set_yticklabels([]); ax.set_zticklabels([])
-
-    # Fill the canvas (no margins) without tight_layout (avoids bbox error)
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
     plt.show()
@@ -291,8 +308,92 @@ def plot_strokes_and_program(executor, sample_points, feature_lines=None):
 
 
 
+def compare_optimized_programs(executor, use_offsets=True):
+    """
+    Plot program cuboid edges before (black) and after applying optimized translations (red).
+    - executor: a program_executor.Executor instance
+    - use_offsets: if True, loads fit_translations.json and applies its offsets
+    Returns (fig, ax).
+    """
+    import json
+    from pathlib import Path
 
+    fig = plt.figure(figsize=(8, 7))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.view_init(elev=22, azim=-62)
 
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    # ---- load optimized offsets
+    offsets = {}
+    if use_offsets:
+        ir_path = getattr(executor, "ir_path", None)
+        if ir_path is None:
+            input_dir = Path.cwd().parent / "input"
+        else:
+            input_dir = Path(ir_path).parent
+        trans_file = input_dir / "fit_translations.json"
+        if trans_file.exists():
+            try:
+                data = json.loads(trans_file.read_text())
+                offsets = data.get("offsets_xyz", {})
+            except Exception as e:
+                print(f"[warn] Failed to load translations: {e}")
+
+    # ---- original program (black)
+    for name, inst in executor.instances.items():
+        if name == "bbox":
+            continue
+        o = inst.T[:3, 3]
+        s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
+        for (p0, p1) in _cuboid_edges_from_origin_size(o, s):
+            ax.plot(
+                [p0[0], p1[0]], [p0[1], p1[1]], [p0[2], p1[2]],
+                "-", color="black", linewidth=1.0, alpha=0.8
+            )
+
+    # ---- optimized program (red)
+    if offsets:
+        for name, inst in executor.instances.items():
+            if name == "bbox":
+                continue
+            o = inst.T[:3, 3].copy()
+            if name in offsets:
+                o = o + np.array(offsets[name], dtype=float)
+            s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
+            for (p0, p1) in _cuboid_edges_from_origin_size(o, s):
+                ax.plot(
+                    [p0[0], p1[0]], [p0[1], p1[1]], [p0[2], p1[2]],
+                    "-", color="red", linewidth=1.2, alpha=0.9
+                )
+    else:
+        print("[info] No optimized translations found; only original program is shown.")
+
+    # ---- axis scaling: full bbox, equal aspect cube
+    L, W, H = executor.bbox.l, executor.bbox.w, executor.bbox.h
+    maxlen = max(L, W, H)
+    xmid, ymid, zmid = L / 2, W / 2, H / 2
+    ax.set_xlim(xmid - maxlen / 2, xmid + maxlen / 2)
+    ax.set_ylim(ymid - maxlen / 2, ymid + maxlen / 2)
+    ax.set_zlim(zmid - maxlen / 2, zmid + maxlen / 2)
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    # ---- style cleanup
+    ax.grid(False)
+    ax.set_xlabel(""); ax.set_ylabel(""); ax.set_zlabel("")
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_visible(False)
+        axis.line.set_visible(False)
+    ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    ax.set_xticklabels([]); ax.set_yticklabels([]); ax.set_zticklabels([])
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+
+    plt.show()
+    return fig, ax
 
 
 # ====== Rescaling ======
