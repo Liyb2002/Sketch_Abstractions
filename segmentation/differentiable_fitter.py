@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-differentiable_fitter.py  (translation + scaling)
+differentiable_fitter.py  (two-phase: translations then scales)
 
-Optimize per-part world translations and per-axis log-scales to fit 3D stroke samples.
+Optimize per-part world translations first (with scales frozen),
+then optimize per-axis log-scales (with translations frozen), to fit 3D stroke samples.
 - Sizes are size0 * exp(log_scale) (kept positive via exp)
 - Fits strokes to the union of cuboid EDGES (good for wireframe strokes)
-- Saves learned per-part offsets to ../input/fit_translations.json (unchanged)
-- Also saves learned per-part scales to ../input/fit_scales.json  (new)
+- Saves learned per-part offsets to ../input/fit_translations.json
+- Saves learned per-part scales  to ../input/fit_scales.json
 - Does NOT modify the IR on disk (no size or anchor edits)
 
 Inputs:
@@ -15,15 +16,12 @@ Inputs:
 
 API:
   run_differentiable_fit(input_dir: Path, sample_points, feature_lines,
-                         steps=200, lr=1e-2) -> Executor
+                         steps=200, lr=1e-2,
+                         steps_T=None, steps_S=None,
+                         lr_T=None, lr_S=None) -> Executor
 
 Conventions:
 - feature_lines[-1] is a type id: 1 line, 2 circle, 3 cylinder face, 4 arc, 5 spline, 6 sphere
-
-Notes:
-- Attach graph is respected; we apply sizes as size0 * exp(log_scale) everywhere they appear.
-- Translate-array copies inherit the prototype's learned offset and scale.
-- Loss: ONLY the edge snapping loss (no extra terms).
 """
 
 from __future__ import annotations
@@ -42,9 +40,6 @@ Tensor = torch.Tensor
 # ----------------------- Basic helpers -----------------------
 
 def flatten_points(sample_points: List[List[List[float]]]) -> Tensor:
-    """
-    Flatten a list of per-stroke 3D samples into a single (M,3) tensor.
-    """
     pts = []
     for stroke in sample_points:
         for p in stroke:
@@ -58,19 +53,10 @@ def flatten_points(sample_points: List[List[List[float]]]) -> Tensor:
 def flatten_points_with_masks(
     sample_points: List[List[List[float]]],
     feature_lines: List[List[float]],
-    edge_types: Tuple[int, ...] = (1,)  # stroke type ids to include in EDGE loss
+    edge_types: Tuple[int, ...] = (1,)
 ) -> Tuple[Tensor, Tensor]:
-    """
-    Flattens sample_points (list per stroke) and builds a boolean mask indicating
-    which per-point samples belong to strokes whose type is in `edge_types`.
-    Assumes order-alignment between feature_lines and sample_points.
-    Returns:
-      pts: (M,3) float32
-      mask_edge: (M,) bool
-    """
     pts = []
     mask = []
-
     for fl, stroke_pts in zip(feature_lines, sample_points):
         t = int(fl[-1]) if isinstance(fl, list) and len(fl) >= 1 else -1
         is_edge_like = (t in edge_types)
@@ -78,10 +64,8 @@ def flatten_points_with_masks(
             if isinstance(p, (list, tuple)) and len(p) == 3:
                 pts.append([float(p[0]), float(p[1]), float(p[2])])
                 mask.append(is_edge_like)
-
     if not pts:
         return torch.empty(0, 3), torch.empty(0, dtype=torch.bool)
-
     return torch.tensor(pts, dtype=torch.float32), torch.tensor(mask, dtype=torch.bool)
 
 
@@ -123,7 +107,6 @@ class DifferentiableExecutor(nn.Module):
         if name == "bbox":
             return torch.tensor([float(self.bb["l"]), float(self.bb["w"]), float(self.bb["h"])],
                                 dtype=torch.float32, device=self.device)
-        # size = size_base * exp(log_scale)
         base = self.size_base[name]
         if name in self._dlogscale:
             return base * torch.exp(self._dlogscale[name])
@@ -213,11 +196,6 @@ class DifferentiableExecutor(nn.Module):
 # ----------------------- Distances: surface & edges -----------------------
 
 def _dist_point_to_segments(points: torch.Tensor, segs: torch.Tensor) -> torch.Tensor:
-    """
-    points: (M,3)
-    segs:   (N,12,2,3)
-    returns: (M,N,12) Euclidean distances to each segment
-    """
     if points.dim() != 2 or points.size(-1) != 3:
         raise ValueError(f"[points] expected (M,3), got {tuple(points.shape)}")
     if segs.dim() != 4 or segs.size(-1) != 3 or segs.size(-2) != 2 or segs.size(-3) != 12:
@@ -241,11 +219,6 @@ def _dist_point_to_segments(points: torch.Tensor, segs: torch.Tensor) -> torch.T
 
 
 def union_softmin_edges(points: torch.Tensor, boxes: torch.Tensor, tau: float = 0.02) -> torch.Tensor:
-    """
-    Soft-min distance from points (M,3) to the union of all edges
-    of axis-aligned boxes (N,6: [x0,y0,z0,l,w,h]).
-    Returns (M,)
-    """
     if boxes.numel() == 0:
         return torch.full((points.shape[0],), 1e3, device=points.device)
     if boxes.dim() != 2 or boxes.size(-1) != 6:
@@ -254,7 +227,6 @@ def union_softmin_edges(points: torch.Tensor, boxes: torch.Tensor, tau: float = 
     O = boxes[:, 0:3]   # (N,3)
     S = boxes[:, 3:6]   # (N,3)
 
-    # Corners: (N,8,3)
     N = O.size(0)
     device = boxes.device
     mask = torch.tensor([
@@ -270,7 +242,6 @@ def union_softmin_edges(points: torch.Tensor, boxes: torch.Tensor, tau: float = 
 
     corners = O[:, None, :].expand(N, 8, 3) + S[:, None, :].expand(N, 8, 3) * mask  # (N,8,3)
 
-    # Edges: (N,12,2,3)
     idx_pairs = torch.tensor([
         [0, 1], [2, 3], [4, 5], [6, 7],   # +X edges
         [0, 2], [1, 3], [4, 6], [5, 7],   # +Y edges
@@ -280,7 +251,6 @@ def union_softmin_edges(points: torch.Tensor, boxes: torch.Tensor, tau: float = 
     b = corners[:, idx_pairs[:, 1], :]     # (N,12,3)
     segs = torch.stack([a, b], dim=2).contiguous()  # (N,12,2,3)
 
-    # Distances to all edges of all boxes -> (M, N, 12)
     d_all = _dist_point_to_segments(points, segs)   # (M,N,12)
     d_min_per_box = d_all.min(dim=-1).values        # (M,N)
 
@@ -288,17 +258,25 @@ def union_softmin_edges(points: torch.Tensor, boxes: torch.Tensor, tau: float = 
     return -tau * torch.logsumexp(v, dim=1)         # (M,)
 
 
-# ----------------------- Public entrypoint -----------------------
+# ----------------------- Public entrypoint (two-phase) -----------------------
 
 def run_differentiable_fit(input_dir: Path,
                            sample_points: List[List[List[float]]],
                            feature_lines: List[List[float]],
                            steps: int = 200,
-                           lr: float = 1e-2) -> Executor:
+                           lr: float = 1e-2,
+                           *,
+                           steps_T: int | None = None,
+                           steps_S: int | None = None,
+                           lr_T: float | None = None,
+                           lr_S: float | None = None) -> Executor:
     """
-    Optimize per-part translations AND per-axis scales to fit stroke samples to edges.
-    Writes learned offsets to ../input/fit_translations.json  (unchanged)
-    Writes learned scales  to ../input/fit_scales.json        (new; multiplicative factors)
+    Two-phase optimization:
+      Phase 1 (T-only): freeze scales, optimize translations.
+      Phase 2 (S-only): freeze translations, optimize per-axis log-scales.
+
+    Writes learned offsets to ../input/fit_translations.json
+    Writes learned scales  to ../input/fit_scales.json
     Returns a fresh program_executor.Executor for the original IR.
     """
     ir_path = input_dir / "sketch_program_ir.json"
@@ -309,9 +287,8 @@ def run_differentiable_fit(input_dir: Path,
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     dex = DifferentiableExecutor(ir, device=device).to(device)
-    opt = torch.optim.Adam(dex.parameters(), lr=lr)
 
-    # Prepare all points + boolean mask for edge-loss points (only straight lines)
+    # Prepare all points + mask for edge-loss points (only straight lines)
     pts_all, mask_edge = flatten_points_with_masks(sample_points, feature_lines, edge_types=(1,))
     pts_all = pts_all.to(device)
     mask_edge = mask_edge.to(device)
@@ -324,31 +301,59 @@ def run_differentiable_fit(input_dir: Path,
     if pts_edge.numel() == 0:
         print("⚠️ No points matched edge_types for edge loss; edge term will be skipped.")
 
-    for step in range(steps):
-        opt.zero_grad()
-
+    # Helper: compute loss
+    def compute_loss() -> torch.Tensor:
         placed = dex()
         boxes = dex.pack_boxes(placed, skip_bbox=True)  # (N,6)
-
-        # ONLY the edge snapping loss
         if pts_edge.numel() > 0:
             d_edge = union_softmin_edges(pts_edge, boxes, tau=0.02)   # (Me,)
-            loss_edge = d_edge.mean()
+            return d_edge.mean()
         else:
-            loss_edge = torch.tensor(0.0, device=device)
+            return torch.tensor(0.0, device=device)
 
-        loss = loss_edge
+    # ---------------- Phase 1: Translations only ----------------
+    nT = steps_T if steps_T is not None else steps // 2
+    lrT = lr_T if lr_T is not None else lr
+
+    # Freeze scales
+    for p in dex._dlogscale.values():
+        p.requires_grad_(False)
+    for p in dex._dorigin.values():
+        p.requires_grad_(True)
+
+    opt_T = torch.optim.Adam([p for p in dex._dorigin.values() if p.requires_grad], lr=lrT)
+
+    for step in range(nT):
+        opt_T.zero_grad()
+        loss = compute_loss()
         loss.backward()
-        opt.step()
+        opt_T.step()
+        if step % 20 == 0 or step == nT - 1:
+            print(f"[fit-T ] step {step:03d} | loss={loss.item():.6f}")
 
-        if step % 20 == 0 or step == steps - 1:
-            print(f"[fit-TS] step {step:03d} | "
-                  f"loss={loss.item():.6f}  edge={loss_edge.item():.6f} ")
+    # ---------------- Phase 2: Scales only ----------------------
+    nS = steps_S if steps_S is not None else (steps - nT)
+    lrS = lr_S if lr_S is not None else lr
+
+    # Freeze translations; unfreeze scales
+    for p in dex._dorigin.values():
+        p.requires_grad_(False)
+    for p in dex._dlogscale.values():
+        p.requires_grad_(True)
+
+    opt_S = torch.optim.Adam([p for p in dex._dlogscale.values() if p.requires_grad], lr=lrS)
+
+    for step in range(nS):
+        opt_S.zero_grad()
+        loss = compute_loss()
+        loss.backward()
+        opt_S.step()
+        if step % 20 == 0 or step == nS - 1:
+            print(f"[fit-S ] step {step:03d} | loss={loss.item():.6f}")
 
     # ---- Save learned translations & scales (sidecar JSONs) ----
     with torch.no_grad():
         offsets = {k: dex._dorigin[k].detach().cpu().tolist() for k in dex.part_names}
-        # multiplicative scales = exp(log_scale)
         scales = {k: torch.exp(dex._dlogscale[k]).detach().cpu().tolist() for k in dex.part_names}
 
     sidecar_T = {

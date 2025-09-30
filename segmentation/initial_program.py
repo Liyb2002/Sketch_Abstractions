@@ -354,36 +354,17 @@ def _parent_anchor_for(var: str, attach_list: List[Dict[str,Any]]) -> Optional[T
             return a["a"], (float(a["x1"]), float(a["y1"]), float(a["z1"]))
     return None
 
+
+
+
 def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> Dict[str, Any]:
     """
     Deterministic translate-only instancing (program-agnostic, robust).
 
-    Key change vs. the earlier version:
-      - Detect arrays using the **PARENT-SIDE** anchor fractions from the first attach
-        of each member (and require a common parent). This reflects how programs are
-        usually authored: the child-side anchor is constant (e.g., top-center), while
-        the parent-side varies across the parent surface.
-      - If those parent-side anchors form a uniform grid along X/Y/Z (in normalized
-        fractions), compress the instances into translate ops (n includes the prototype).
-
-    Steps:
-      1) Group candidates by (basename with trailing digits removed) + identical (l,w,h,aligned).
-      2) For each group, for each member:
-         - Find the FIRST attach it appears in.
-         - Extract (parent_name, parent-side fractions).
-         - Require all members share the SAME parent.
-      3) Build deltas to the lexicographically minimal member (by parent-side (x,y,z)).
-         - Check each axis for uniform spacing; collect unique values along each axis.
-         - Require exact cartesian coverage of the grid.
-      4) Emit translate ops for axes with >1 unique value. Remove non-prototype members and
-         their references (attach/squeeze/reflect/translate).
-      5) Return a deep-copied, edited IR.
-
-    Notes:
-      - `d` is emitted in *normalized bbox units* (same coordinate system as anchors).
-      - We round anchors to a few decimals before set/diff checks to de-noise tiny drift.
+    FIX: Parent-side anchor steps are in the parent's normalized units. We convert them
+    to bbox-normalized distances before emitting translate ops so they remain correct
+    after deterministic scaling.
     """
-    # ---- local helpers (standalone; do not depend on outer file helpers) ----
     import json as _json
     import re as _re
 
@@ -395,27 +376,15 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> D
         return var[:m.start()] if m else var
 
     def _is_uniform_progression(vals: List[float], tol: float = 1e-6) -> Tuple[bool, float]:
-        """
-        Given sorted unique vals (should include 0 for the prototype), check equal spacing.
-        Returns (ok, step). If <=1 value, ok=True, step=0.
-        """
         if len(vals) <= 1:
             return True, 0.0
         diffs = [vals[i + 1] - vals[i] for i in range(len(vals) - 1)]
         step = sum(diffs) / len(diffs)
         if step <= tol:
             return False, 0.0
-        for d in diffs:
-            if abs(d - step) > tol:
-                return False, 0.0
-        return True, step
+        return all(abs(d - step) <= tol for d in diffs), step
 
     def _parent_anchor_for(var: str, attach_list: List[Dict[str, Any]]) -> Optional[Tuple[str, Tuple[float, float, float]]]:
-        """
-        Return (parent_name, (x_parent,y_parent,z_parent)) from the FIRST attach that involves `var`.
-        If var is on 'a' side, parent is 'b' and we return (x2,y2,z2). If var is on 'b' side,
-        parent is 'a' and we return (x1,y1,z1).
-        """
         for a in attach_list:
             if a["a"] == var:
                 return a["b"], (float(a["x2"]), float(a["y2"]), float(a["z2"]))
@@ -426,46 +395,53 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> D
     def _round_frac3(t: Tuple[float, float, float], nd: int = 6) -> Tuple[float, float, float]:
         return (round(t[0], nd), round(t[1], nd), round(t[2], nd))
 
-    # ---- deep copy IR so we don't mutate the caller's object ----
+    # deep copy IR
     ir = _json.loads(_json.dumps(ir_in))
     P = ir["program"]
     cuboids: List[Dict[str, Any]] = P.get("cuboids", [])
     attaches: List[Dict[str, Any]] = P.get("attach", [])
-    translates_existing: List[Dict[str, Any]] = P.setdefault("translate", [])
+    P.setdefault("translate", [])
+    translates_existing: List[Dict[str, Any]] = P["translate"]
 
     if not cuboids or not attaches:
         return ir
 
-    # index sizes (must match within tiny tolerance; we treat as exact floats from the IR)
-    size_by_var: Dict[str, Tuple[float, float, float, bool]] = {
+    # sizes per var (for parent->bbox unit conversion)
+    size_by_var_lwh: Dict[str, Tuple[float, float, float]] = {
+        c["var"]: (float(c["l"]), float(c["w"]), float(c["h"])) for c in cuboids
+    }
+    bb = P["bblock"]
+    bbox_size = (float(bb["l"]), float(bb["w"]), float(bb["h"]))
+    size_by_var_lwh["bbox"] = bbox_size
+
+    # group by basename + identical (l,w,h,aligned) and has trailing digits
+    size_with_align: Dict[str, Tuple[float, float, float, bool]] = {
         c["var"]: (float(c["l"]), float(c["w"]), float(c["h"]), bool(c.get("aligned", True)))
         for c in cuboids
     }
-
-    # group by basename + identical size + has trailing digits
     groups: Dict[Tuple[str, Tuple[float, float, float, bool]], List[str]] = {}
     for c in cuboids:
         var = c["var"]
         if not _has_trailing_digits(var):
             continue
-        key = (_basename(var), size_by_var[var])
+        key = (_basename(var), size_with_align[var])
         groups.setdefault(key, []).append(var)
 
     if not groups:
-        return ir  # nothing to do
+        return ir
 
     removed_vars_total: List[str] = []
     new_translates: List[Dict[str, Any]] = []
 
-    for (base, size), members in groups.items():
+    for (base, _size_wa), members in groups.items():
         if len(members) < 2:
             continue
 
-        # Collect parent anchors and ensure a common parent for the group.
+        # collect first-parent anchors; require common parent
         parent_by_member: Dict[str, str] = {}
         anchor_by_member: Dict[str, Tuple[float, float, float]] = {}
-        ok_group = True
         common_parent: Optional[str] = None
+        ok_group = True
 
         for v in members:
             pa = _parent_anchor_for(v, attaches)
@@ -474,8 +450,7 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> D
                 break
             parent_name, parent_frac = pa
             parent_by_member[v] = parent_name
-            anchor_by_member[v] = _round_frac3(parent_frac, nd=6)  # de-noise tiny float drift
-
+            anchor_by_member[v] = _round_frac3(parent_frac, nd=6)
             if common_parent is None:
                 common_parent = parent_name
             elif parent_name != common_parent:
@@ -485,11 +460,11 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> D
         if not ok_group or common_parent is None:
             continue
 
-        # Choose prototype as the lexicographically minimal parent anchor (x,y,z).
+        # choose prototype = lexicographically minimal (x,y,z) in parent fractions
         proto = min(members, key=lambda v: anchor_by_member[v])
         axp, ayp, azp = anchor_by_member[proto]
 
-        # Deltas from proto (in normalized fractions).
+        # deltas from prototype (still in PARENT FRACTIONS)
         deltas = {
             v: (anchor_by_member[v][0] - axp,
                 anchor_by_member[v][1] - ayp,
@@ -497,67 +472,67 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> D
             for v in members
         }
 
-        # Unique values per axis (rounded again to be safe).
         xs = sorted(set(round(d[0], 6) for d in deltas.values()))
         ys = sorted(set(round(d[1], 6) for d in deltas.values()))
         zs = sorted(set(round(d[2], 6) for d in deltas.values()))
 
-        # Each axis must be a uniform progression (may be length 1).
-        okx, dx = _is_uniform_progression(xs, tol)
-        oky, dy = _is_uniform_progression(ys, tol)
-        okz, dz = _is_uniform_progression(zs, tol)
+        okx, dx_parent = _is_uniform_progression(xs, tol)
+        oky, dy_parent = _is_uniform_progression(ys, tol)
+        okz, dz_parent = _is_uniform_progression(zs, tol)
         if not (okx and oky and okz):
             continue
 
-        # Verify full cartesian coverage of the grid.
-        expected_count = len(xs) * len(ys) * len(zs)
-        if expected_count != len(members):
+        # full cartesian coverage check
+        expected = len(xs) * len(ys) * len(zs)
+        if expected != len(members):
             continue
-
         grid = {(x, y, z) for x in xs for y in ys for z in zs}
         if any((round(dxv, 6), round(dyv, 6), round(dzv, 6)) not in grid for (dxv, dyv, dzv) in deltas.values()):
             continue
 
-        # Build translate ops (n includes the prototype). Only axes with >1 unique value and nonzero step.
-        if len(xs) > 1 and abs(dx) > tol:
-            new_translates.append({"c": proto, "axis": "X", "n": len(xs), "d": float(dx)})
-        if len(ys) > 1 and abs(dy) > tol:
-            new_translates.append({"c": proto, "axis": "Y", "n": len(ys), "d": float(dy)})
-        if len(zs) > 1 and abs(dz) > tol:
-            new_translates.append({"c": proto, "axis": "Z", "n": len(zs), "d": float(dz)})
+        # --- unit conversion: parent fractions -> bbox-normalized distances ---
+        Lp, Wp, Hp = size_by_var_lwh.get(common_parent, bbox_size)
+        Lbb, Wbb, Hbb = bbox_size
 
-        # Mark all but the prototype for removal.
-        to_remove = [v for v in members if v != proto]
-        removed_vars_total.extend(to_remove)
+        def _norm_step(frac_step: float, parent_axis_size: float, bbox_axis_size: float) -> float:
+            if abs(frac_step) <= tol or parent_axis_size <= tol or bbox_axis_size <= tol:
+                return 0.0
+            return (frac_step * parent_axis_size) / bbox_axis_size
 
-    # If nothing detected, return the input IR untouched.
+        dX = _norm_step(dx_parent, Lp, Lbb)
+        dY = _norm_step(dy_parent, Wp, Wbb)
+        dZ = _norm_step(dz_parent, Hp, Hbb)
+
+        # emit translates (n includes prototype)
+        if len(xs) > 1 and abs(dX) > tol:
+            new_translates.append({"c": proto, "axis": "X", "n": len(xs), "d": float(dX)})
+        if len(ys) > 1 and abs(dY) > tol:
+            new_translates.append({"c": proto, "axis": "Y", "n": len(ys), "d": float(dY)})
+        if len(zs) > 1 and abs(dZ) > tol:
+            new_translates.append({"c": proto, "axis": "Z", "n": len(zs), "d": float(dZ)})
+
+        # remove all but prototype
+        removed_vars_total.extend([v for v in members if v != proto])
+
     if not removed_vars_total and not new_translates:
         return ir
 
     removed_set = set(removed_vars_total)
 
-    # 1) Remove cuboids for removed vars.
-    P["cuboids"] = [c for c in cuboids if c["var"] not in removed_set]
-
-    # 2) Remove attaches that reference removed vars.
+    # prune geometry & ops that reference removed vars
+    P["cuboids"] = [c for c in P.get("cuboids", []) if c["var"] not in removed_set]
     P["attach"] = [a for a in attaches if a["a"] not in removed_set and a["b"] not in removed_set]
-
-    # 3) Drop squeeze/reflect/translate entries that reference removed vars; keep unrelated ones.
     if "squeeze" in P:
-        P["squeeze"] = [
-            s for s in P["squeeze"]
-            if s["a"] not in removed_set and s["b"] not in removed_set and s["c"] not in removed_set
-        ]
+        P["squeeze"] = [s for s in P["squeeze"] if s["a"] not in removed_set and s["b"] not in removed_set and s["c"] not in removed_set]
     if "reflect" in P:
         P["reflect"] = [r for r in P["reflect"] if r["c"] not in removed_set]
     if "translate" in P:
-        P["translate"] = [t for t in P["translate"] if t["c"] not in removed_set]
+        P["translate"] = [t for t in translates_existing if t["c"] not in removed_set]
     else:
         P["translate"] = []
 
-    # 4) Append new translate arrays (after pruning).
+    # append our new arrays last (deterministic order)
     P["translate"].extend(new_translates)
-
     return ir
 
 
