@@ -24,7 +24,7 @@ from program_executor import Executor
 def stroke_to_cuboid_map(
     exe: Executor,
     sample_points: List[List[List[float]]],
-    dist_thresh: float = 0.5,
+    dist_thresh: float = 0.7,
     device: str = "cpu"
 ) -> List[int]:
     """
@@ -151,3 +151,76 @@ def vis_stroke_mapping(sample_points, stroke_labels, show=True):
         plt.show()
 
     return fig, ax
+
+
+
+def vis_strokes_by_cuboid(sample_points, stroke_labels, show=True):
+    """
+    For each cuboid label, open a figure that highlights the strokes assigned to it in red.
+    Unmapped strokes (-1) stay gray; non-target cuboid strokes are faint gray.
+    Returns:
+        cuboid_to_strokes: {cuboid_idx: [stroke_indices, ...]}
+        figs_axes: list of (fig, ax) for each cuboid figure
+    """
+    # figure out how many cuboids are referenced
+    labeled = [lbl for lbl in stroke_labels if lbl != -1]
+    n_cuboids = (max(labeled) + 1) if labeled else 0
+
+    # build reverse index: cuboid -> list of stroke indices
+    cuboid_to_strokes = {c: [] for c in range(n_cuboids)}
+    for s_idx, lbl in enumerate(stroke_labels):
+        if lbl != -1:
+            cuboid_to_strokes[lbl].append(s_idx)
+
+    # precompute global bounds for equal scaling
+    xs_all, ys_all, zs_all = [], [], []
+    for stroke in sample_points:
+        if not stroke:
+            continue
+        xs, ys, zs = zip(*stroke)
+        xs_all.extend(xs); ys_all.extend(ys); zs_all.extend(zs)
+
+    def _set_equal_axes(ax):
+        if xs_all and ys_all and zs_all:
+            x_min, x_max = min(xs_all), max(xs_all)
+            y_min, y_max = min(ys_all), max(ys_all)
+            z_min, z_max = min(zs_all), max(zs_all)
+            x_c = (x_min + x_max) / 2
+            y_c = (y_min + y_max) / 2
+            z_c = (z_min + z_max) / 2
+            half = max(x_max - x_min, y_max - y_min, z_max - z_min) / 2
+            ax.set_xlim([x_c - half, x_c + half])
+            ax.set_ylim([y_c - half, y_c + half])
+            ax.set_zlim([z_c - half, z_c + half])
+            try:
+                ax.set_box_aspect((1, 1, 1))
+            except Exception:
+                pass
+
+    figs_axes = []
+    for c in range(n_cuboids):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+
+        # plot all strokes; highlight the ones mapped to this cuboid
+        for s_idx, stroke in enumerate(sample_points):
+            if not stroke:
+                continue
+            xs, ys, zs = zip(*stroke)
+            if s_idx in cuboid_to_strokes[c]:
+                ax.plot(xs, ys, zs, color="red", linewidth=2.0, alpha=1.0)  # highlight in red
+            else:
+                # faint gray for others (including unmapped)
+                ax.plot(xs, ys, zs, color="gray", linewidth=0.8, alpha=0.25)
+
+        _set_equal_axes(ax)
+        ax.set_axis_off()
+        ax.grid(False)
+        ax.view_init(elev=100, azim=45)
+        ax.set_title(f"Cuboid {c} — strokes: {cuboid_to_strokes[c]}")
+        if show:
+            plt.show()
+
+        figs_axes.append((fig, ax))
+
+    return 

@@ -49,7 +49,8 @@ def run_once():
     # 5) Stroke → cuboid mapping + visualization
     stroke_labels = stroke_mapping.stroke_to_cuboid_map(exe, sample_points)
     print(f"Stroke mapping: {stroke_labels}")
-    stroke_mapping.vis_stroke_mapping(sample_points, stroke_labels)
+    # stroke_mapping.vis_stroke_mapping(sample_points, stroke_labels)
+    stroke_mapping.vis_strokes_by_cuboid(sample_points, stroke_labels)
 
 if __name__ == "__main__":
     run_once()
