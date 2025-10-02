@@ -12,7 +12,6 @@ import json
 
 import shape_optimizer
 from shape_optimizer import load_perturbed_feature_lines, plot_strokes_and_program, rescale_and_execute
-from differentiable_fitter import run_differentiable_fit   # <— NEW
 import stroke_mapping   # <— NEW
 
 
@@ -25,32 +24,32 @@ def run_once():
 
     # 2) Load strokes (points + typed feature_lines)
     sample_points, feature_lines = load_perturbed_feature_lines(input_dir)
-    # plot_strokes_and_program(exe, sample_points, feature_lines)
 
-    # 3) Differentiable fitting: updates IR on disk and returns a fresh Executor
-    exe = run_differentiable_fit(
-        input_dir,
-        sample_points,
-        feature_lines,
-        steps=1000,
-        lr=1e-2,
+    # 3) Pick the first component (prototype) in program order
+    ir_path = input_dir / "sketch_program_ir.json"
+    ir = json.loads(ir_path.read_text(encoding="utf-8"))
+    first_name = ir["program"]["cuboids"][0]["var"]  # sequential order, skip 'bbox'
+
+    # Find that exact prototype instance in the executed assembly
+    prims = exe.primitives()  # analytic cuboids with world origin & size
+    comp = next(p for p in prims if p.name == first_name)
+
+    # 4) Build mask of strokes near this component  —— NEW
+    keep_idxs, mask = stroke_mapping.strokes_near_cuboid(
+        sample_points=sample_points,
+        comp=comp,
+        thresh=0.5,     # tune as needed; uses same world units as the executor
     )
-
-    # 4) Export STL and visualize the NEW (post-fit) assembly
-    mesh = exe.to_trimesh()
-    mesh.export(out_stl)
-    print(f"✅ Wrote {out_stl}  (faces: {len(mesh.faces)}, verts: {len(mesh.vertices)})")
-
-    print("📈 Plotting (after differentiable fit) ...")
-    plot_strokes_and_program(exe, sample_points, feature_lines, True)
-    shape_optimizer.compare_optimized_programs(exe)
+    print(f"[mapping] strokes near '{comp.name}': {len(keep_idxs)} / {len(sample_points)}")
 
 
-    # 5) Stroke → cuboid mapping + visualization
-    stroke_labels = stroke_mapping.stroke_to_cuboid_map(exe, sample_points)
-    print(f"Stroke mapping: {stroke_labels}")
-    # stroke_mapping.vis_stroke_mapping(sample_points, stroke_labels)
-    stroke_mapping.vis_strokes_by_cuboid(sample_points, stroke_labels)
+    # 5) Visualize selection
+    stroke_mapping.plot_stroke_selection(
+        sample_points=sample_points,
+        mask=mask,
+        save_path=input_dir / f"selection_{comp.name}.png",  # optional: save image
+        show=True
+    )
 
 if __name__ == "__main__":
     run_once()

@@ -2,225 +2,149 @@
 """
 stroke_mapping.py
 
-Map each stroke to a cuboid by checking the distance between stroke sample points
-and the edges of cuboids. One stroke maps to at most one cuboid. If no cuboid is
-within the threshold distance, the stroke is labeled -1.
+Utilities to score & select strokes that are near a given cuboid component.
+Distance definition:
+  For a stroke (N≈10 sampled 3D points), its distance to a cuboid is
+  the average over points of the minimum Euclidean distance to any of the
+  cuboid's 12 edges.
 
-Also provides a visualization helper to plot strokes colored by cuboid assignment.
+Public API:
+  - stroke_to_cuboid_distance(stroke_points, cuboid_edges) -> float
+  - strokes_near_cuboid(sample_points, comp, thresh=0.5) -> (indices, mask)
 """
 
 from __future__ import annotations
-from typing import List
+from typing import List, Tuple
 import numpy as np
-import torch
-import matplotlib.pyplot as plt
-import random
-
-from program_executor import Executor
+from program_executor import CuboidGeom
 
 
-# ---------------- Mapping ----------------
+# ------------ geometry helpers ------------
 
-def stroke_to_cuboid_map(
-    exe: Executor,
-    sample_points: List[List[List[float]]],
-    dist_thresh: float = 0.7,
-    device: str = "cpu"
-) -> List[int]:
+def _points_to_segments_min_dists(p: np.ndarray, A: np.ndarray, B: np.ndarray) -> np.ndarray:
     """
-    stroke→cuboid distance = average over the stroke's points of
-    (point→closest edge of that cuboid).
+    Vectorized point->segment distance for a *single* point against many segments.
+
+    p: (3,) point
+    A: (E,3) segment starts
+    B: (E,3) segment ends
+    returns: (E,) distances from p to each segment A_i B_i
     """
-    prims = exe.primitives()
-    if not prims:
-        return [-1] * len(sample_points)
+    AB = B - A                    # (E,3)
+    AP = p[None, :] - A          # (E,3)
+    AB2 = np.einsum("ij,ij->i", AB, AB)  # (E,)
+    # Guard zero-length segments
+    denom = np.maximum(AB2, 1e-18)
+    t = np.einsum("ij,ij->i", AP, AB) / denom
+    t = np.clip(t, 0.0, 1.0)     # (E,)
+    proj = A + t[:, None] * AB   # (E,3)
+    dp = p[None, :] - proj       # (E,3)
+    return np.linalg.norm(dp, axis=1)  # (E,)
 
-    # Build cuboid edge segments (N,12,2,3)
-    boxes = []
-    for g in prims:
-        o = np.array(g.origin, float)
-        s = np.array(g.size, float)
-        corners = np.array([
-            [0,0,0],[1,0,0],[0,1,0],[1,1,0],
-            [0,0,1],[1,0,1],[0,1,1],[1,1,1],
-        ], float) * s + o
-        idx_pairs = np.array([
-            [0,1],[1,3],[3,2],[2,0],   # bottom
-            [4,5],[5,7],[7,6],[6,4],   # top
-            [0,4],[1,5],[2,6],[3,7],   # verticals
-        ], dtype=int)
-        a = corners[idx_pairs[:,0]]
-        b = corners[idx_pairs[:,1]]
-        segs = np.stack([a,b], axis=1)  # (12,2,3)
-        boxes.append(segs)
-    boxes = torch.tensor(np.stack(boxes, axis=0), dtype=torch.float32, device=device) # (N,12,2,3)
 
-    def point_to_segs(points: torch.Tensor, segs: torch.Tensor) -> torch.Tensor:
-        # points: (M,3), segs: (N,12,2,3)
-        M = points.size(0)
-        a = segs[:, :, 0, :].unsqueeze(0)  # (1,N,12,3)
-        b = segs[:, :, 1, :].unsqueeze(0)  # (1,N,12,3)
-        p = points.view(M,1,1,3)           # (M,1,1,3)
-        ab = b - a
-        ap = p - a
-        denom = (ab*ab).sum(-1).clamp_min(1e-12)
-        t = (ap*ab).sum(-1) / denom
-        t = t.clamp(0,1).unsqueeze(-1)
-        proj = a + t*ab
-        d = ((p - proj)**2).sum(-1).sqrt() # (M,N,12)
-        return d.min(-1).values            # (M,N): per-point distance to each cuboid (closest edge)
+def stroke_to_cuboid_distance(stroke_points: np.ndarray,
+                              cuboid_edges: List[Tuple[np.ndarray, np.ndarray]]) -> float:
+    """
+    Average-of-min-edge distance for a stroke.
 
-    stroke_labels = []
-    for stroke in sample_points:
-        pts = torch.tensor(stroke, dtype=torch.float32, device=device)
-        if pts.numel() == 0:
-            stroke_labels.append(-1)
+    stroke_points: (N,3) array of sampled 3D points along the stroke
+    cuboid_edges : list of 12 (a,b) endpoints from CuboidGeom.edges()
+    returns: scalar mean distance
+    """
+    if stroke_points.size == 0:
+        return float("inf")
+    # Pack edges once
+    A = np.stack([e[0] for e in cuboid_edges], axis=0)  # (E,3)
+    B = np.stack([e[1] for e in cuboid_edges], axis=0)  # (E,3)
+
+    mins = []
+    for p in stroke_points:
+        d_all = _points_to_segments_min_dists(np.asarray(p, float), A, B)
+        mins.append(d_all.min())
+    return float(np.mean(mins))
+
+
+def strokes_near_cuboid(sample_points: List[List[List[float]]],
+                        comp: CuboidGeom,
+                        thresh: float = 0.5) -> Tuple[List[int], np.ndarray]:
+    """
+    Compute which strokes are near a given cuboid (by the average-of-min-edge metric).
+
+    sample_points: List over strokes -> list over points -> [x,y,z]
+    comp         : CuboidGeom for the target component (from Executor.primitives())
+    thresh       : distance threshold in model units (after any rescaling)
+    returns:
+      - indices: list of stroke indices with distance < thresh
+      - mask   : boolean numpy array of shape (num_strokes,) with True where selected
+    """
+    edges = comp.edges()  # list of 12 (a,b) 3D endpoints
+    num_strokes = len(sample_points)
+    keep_idxs: List[int] = []
+    mask = np.zeros(num_strokes, dtype=bool)
+
+    for si, stroke in enumerate(sample_points):
+        P = np.asarray(stroke, dtype=float)
+        if P.size == 0:
             continue
+        dist = stroke_to_cuboid_distance(P, edges)
+        if dist < thresh:
+            keep_idxs.append(si)
+            mask[si] = True
 
-        d_point2box = point_to_segs(pts, boxes)  # (M,N), already min over edges
-        score = d_point2box.mean(dim=0)          # (N,) average over ALL points in the stroke
-        best_idx = int(torch.argmin(score).item())
-        best_val = float(score[best_idx].item())
-
-        if best_val < dist_thresh:
-            stroke_labels.append(best_idx)
-        else:
-            stroke_labels.append(-1)
-
-    return stroke_labels
+    return keep_idxs, mask
 
 
-# ---------------- Visualization ----------------
+import matplotlib.pyplot as plt
+import numpy as np
 
-def vis_stroke_mapping(sample_points, stroke_labels, show=True):
+def plot_stroke_selection(sample_points,
+                          mask,
+                          save_path: str | None = None,
+                          show: bool = True):
     """
-    Visualize strokes with colors based on cuboid mapping.
-    -1 (unmapped) strokes are plotted in gray.
-    Axis/grid/ticks removed, rescaled equally to shape bounds.
+    Plot all strokes as polylines: selected ones in RED, others in BLACK.
+    No grid/axis/ticks, rescaled equally using [center - half, center + half].
     """
-    fig = plt.figure()
+    mask = np.asarray(mask, dtype=bool)
+    fig = plt.figure(figsize=(6, 6))
     ax = fig.add_subplot(111, projection="3d")
 
-    # Assign random colors per cuboid label
-    unique_labels = sorted(set(lbl for lbl in stroke_labels if lbl != -1))
-    cmap = {lbl: (random.random(), random.random(), random.random()) for lbl in unique_labels}
-
-    # Track min/max for rescaling
-    xs_all, ys_all, zs_all = [], [], []
-
-    for stroke, lbl in zip(sample_points, stroke_labels):
-        if not stroke:
+    all_pts = []
+    for i, stroke in enumerate(sample_points):
+        P = np.asarray(stroke, dtype=float)
+        if P.shape[0] < 2:
             continue
-        xs, ys, zs = zip(*stroke)
-        xs_all.extend(xs)
-        ys_all.extend(ys)
-        zs_all.extend(zs)
-        if lbl == -1:
-            color = "gray"
-        else:
-            color = cmap[lbl]
-        ax.plot(xs, ys, zs, color=color, linewidth=1.0)
+        clr = "red" if mask[i] else "black"
+        lw = 1.5 if mask[i] else 0.8
+        ax.plot(P[:, 0], P[:, 1], P[:, 2], color=clr, linewidth=lw)
+        all_pts.append(P)
 
-    # Compute center and half range for equal scaling
-    if xs_all and ys_all and zs_all:
-        x_min, x_max = min(xs_all), max(xs_all)
-        y_min, y_max = min(ys_all), max(ys_all)
-        z_min, z_max = min(zs_all), max(zs_all)
+    if all_pts:
+        all_pts = np.vstack(all_pts)
+        x_min, y_min, z_min = all_pts.min(axis=0)
+        x_max, y_max, z_max = all_pts.max(axis=0)
         x_center = (x_min + x_max) / 2
         y_center = (y_min + y_max) / 2
         z_center = (z_min + z_max) / 2
-        half = max(x_max - x_min, y_max - y_min, z_max - z_min) / 2
+        max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+        half = max_diff / 2
 
-        # Equalize axes
         ax.set_xlim([x_center - half, x_center + half])
         ax.set_ylim([y_center - half, y_center + half])
         ax.set_zlim([z_center - half, z_center + half])
-        try:
-            ax.set_box_aspect((1, 1, 1))
-        except Exception:
-            pass
 
-    # Remove axes, grid, ticks
-    ax.set_axis_off()
+    # Remove grid, ticks, and axes
     ax.grid(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_zlabel("")
+    ax.set_axis_off()
 
-    # Set viewing angle
-    ax.view_init(elev=100, azim=45)
-
+    if save_path:
+        fig.savefig(save_path, bbox_inches="tight", dpi=150)
     if show:
         plt.show()
-
-    return fig, ax
-
-
-
-def vis_strokes_by_cuboid(sample_points, stroke_labels, show=True):
-    """
-    For each cuboid label, open a figure that highlights the strokes assigned to it in red.
-    Unmapped strokes (-1) stay gray; non-target cuboid strokes are faint gray.
-    Returns:
-        cuboid_to_strokes: {cuboid_idx: [stroke_indices, ...]}
-        figs_axes: list of (fig, ax) for each cuboid figure
-    """
-    # figure out how many cuboids are referenced
-    labeled = [lbl for lbl in stroke_labels if lbl != -1]
-    n_cuboids = (max(labeled) + 1) if labeled else 0
-
-    # build reverse index: cuboid -> list of stroke indices
-    cuboid_to_strokes = {c: [] for c in range(n_cuboids)}
-    for s_idx, lbl in enumerate(stroke_labels):
-        if lbl != -1:
-            cuboid_to_strokes[lbl].append(s_idx)
-
-    # precompute global bounds for equal scaling
-    xs_all, ys_all, zs_all = [], [], []
-    for stroke in sample_points:
-        if not stroke:
-            continue
-        xs, ys, zs = zip(*stroke)
-        xs_all.extend(xs); ys_all.extend(ys); zs_all.extend(zs)
-
-    def _set_equal_axes(ax):
-        if xs_all and ys_all and zs_all:
-            x_min, x_max = min(xs_all), max(xs_all)
-            y_min, y_max = min(ys_all), max(ys_all)
-            z_min, z_max = min(zs_all), max(zs_all)
-            x_c = (x_min + x_max) / 2
-            y_c = (y_min + y_max) / 2
-            z_c = (z_min + z_max) / 2
-            half = max(x_max - x_min, y_max - y_min, z_max - z_min) / 2
-            ax.set_xlim([x_c - half, x_c + half])
-            ax.set_ylim([y_c - half, y_c + half])
-            ax.set_zlim([z_c - half, z_c + half])
-            try:
-                ax.set_box_aspect((1, 1, 1))
-            except Exception:
-                pass
-
-    figs_axes = []
-    for c in range(n_cuboids):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
-
-        # plot all strokes; highlight the ones mapped to this cuboid
-        for s_idx, stroke in enumerate(sample_points):
-            if not stroke:
-                continue
-            xs, ys, zs = zip(*stroke)
-            if s_idx in cuboid_to_strokes[c]:
-                ax.plot(xs, ys, zs, color="red", linewidth=2.0, alpha=1.0)  # highlight in red
-            else:
-                # faint gray for others (including unmapped)
-                ax.plot(xs, ys, zs, color="gray", linewidth=0.8, alpha=0.25)
-
-        _set_equal_axes(ax)
-        ax.set_axis_off()
-        ax.grid(False)
-        ax.view_init(elev=100, azim=45)
-        ax.set_title(f"Cuboid {c} — strokes: {cuboid_to_strokes[c]}")
-        if show:
-            plt.show()
-
-        figs_axes.append((fig, ax))
-
-    return 
+    plt.close(fig)
