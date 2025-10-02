@@ -510,13 +510,6 @@ def _print_diagnostics(tag: str,
 
 # ---------- Public API ----------
 def rescale_and_execute(input_dir: Path) -> Executor:
-    """
-    - Loads IR + info
-    - Executes current IR, prints diagnostics
-    - Computes dz to align geometry Z to strokes Z (min-align by default; uses max if smaller correction)
-    - Edits IR in place (overwrites sketch_program_ir.json)
-    - Returns a fresh Executor built from the updated IR
-    """
     ir_path   = input_dir / "sketch_program_ir.json"
     info_path = input_dir / "info.json"
     if not ir_path.exists():
@@ -534,7 +527,7 @@ def rescale_and_execute(input_dir: Path) -> Executor:
     geom_min, geom_max = _geom_aabb_from_executor(exe_before)
     _print_diagnostics("before shift", strokes_min, strokes_max, geom_min, geom_max)
 
-    # Decide Z shift: prefer aligning mins; if max correction is smaller magnitude, use that
+    # Decide Z shift
     dz_min = strokes_min[2] - geom_min[2]
     dz_max = strokes_max[2] - geom_max[2]
     dz = dz_min if abs(dz_min) <= abs(dz_max) else dz_max
@@ -542,15 +535,142 @@ def rescale_and_execute(input_dir: Path) -> Executor:
 
     if abs(dz) >= 1e-9:
         _shift_ir_bbox_z_inplace(ir, dz)
+        # overwrite original so downstream tools see the shift
         ir_path.write_text(json.dumps(ir, indent=2), encoding="utf-8")
         print(f"🧩 Overwrote IR with Z-shift at: {ir_path}")
     else:
         print("dz negligible; IR not modified.")
 
-    # Re-execute updated IR and print post diagnostics
-    ir_after = json.loads(ir_path.read_text(encoding="utf-8"))
-    exe_after = Executor(ir_after)
+    # ---- NEW: normalize attaches to a parent tree, preserving current world placement
+    ir_norm = json.loads(ir_path.read_text(encoding="utf-8"))
+    normalize_attaches_to_parent_tree_inplace(ir_norm)
+    # Write a sibling file for debugging/inspection (optional)
+    out_norm_path = ir_path.with_name(ir_path.stem + "_parenttree.json")
+    out_norm_path.write_text(json.dumps(ir_norm, indent=2), encoding="utf-8")
+    print(f"🔧 Wrote normalized parent-tree IR: {out_norm_path}")
+
+    # Re-execute normalized IR
+    exe_after = Executor(ir_norm)
     geom_min2, geom_max2 = _geom_aabb_from_executor(exe_after)
-    _print_diagnostics("after shift", strokes_min, strokes_max, geom_min2, geom_max2)
+    _print_diagnostics("after shift+normalize", strokes_min, strokes_max, geom_min2, geom_max2)
 
     return exe_after
+
+
+
+
+
+# ====== Attach normalization: make a parent tree rooted at bbox ======
+from typing import Set, List
+import numpy as np
+from program_executor import Executor  # already used elsewhere in this file
+
+def _ir_bbox_min_and_size(P: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
+    bb = P["bblock"]
+    if "min" in bb and "max" in bb:
+        bb_min = np.array(bb["min"], dtype=float).reshape(3)
+        bb_max = np.array(bb["max"], dtype=float).reshape(3)
+        return bb_min, (bb_max - bb_min).astype(float)
+    return np.zeros(3, dtype=float), np.array([bb["l"], bb["w"], bb["h"]], dtype=float)
+
+def _ir_spec_size(P: Dict[str, Any], name: str) -> np.ndarray:
+    if name == "bbox":
+        _, sz = _ir_bbox_min_and_size(P)
+        return sz
+    for c in P.get("cuboids", []):
+        if str(c["var"]) == name:
+            return np.array([float(c["l"]), float(c["w"]), float(c["h"])], dtype=float)
+    raise KeyError(f"Unknown cuboid spec: {name}")
+
+def _ir_nodes(P: Dict[str, Any]) -> List[str]:
+    return ["bbox"] + [str(c["var"]) for c in P.get("cuboids", [])]
+
+def _ir_adj(P: Dict[str, Any]) -> Dict[str, Set[str]]:
+    nbrs: Dict[str, Set[str]] = {n: set() for n in _ir_nodes(P)}
+    for a in P.get("attach", []):
+        A, B = str(a["a"]), str(a["b"])
+        if A in nbrs and B in nbrs:
+            nbrs[A].add(B); nbrs[B].add(A)
+    return nbrs
+
+def _world_min_corners_from_executor(exe: Executor) -> Dict[str, np.ndarray]:
+    """Prototype min corners only (exclude bbox)."""
+    names = {k for k in exe.specs.keys() if k != "bbox"}
+    out: Dict[str, np.ndarray] = {}
+    for nm, inst in exe.instances.items():
+        if nm in names:
+            out[nm] = inst.T[:3, 3].astype(float).copy()
+    out["bbox"] = exe.instances["bbox"].T[:3, 3].astype(float).copy()
+    return out
+
+def normalize_attaches_to_parent_tree_inplace(ir: Dict[str, Any]) -> None:
+    """
+    Rewrite program.attach so every prototype has exactly one parent (a tree rooted at bbox),
+    while preserving current world placement. Reflect/translate lists remain untouched.
+
+    This executes the current IR to read world poses, then rebuilds attaches as:
+        child (vA=[0,0,0]) attaches to parent with parent-side fractions vB
+        s.t. child's min corner equals its current world origin.
+    """
+    P = ir["program"]
+
+    # Execute as-is to get world placements
+    exe = Executor(ir)
+    world_min = _world_min_corners_from_executor(exe)
+
+    # BFS from bbox to choose one parent per node; islands will be anchored to bbox
+    from collections import deque
+    nbrs = _ir_adj(P)
+    parent: Dict[str, str] = {}
+    seen = {"bbox"}
+    dq = deque(["bbox"])
+    while dq:
+        u = dq.popleft()
+        for v in nbrs.get(u, ()):
+            if v not in seen:
+                seen.add(v); parent[v] = u; dq.append(v)
+
+    for n in _ir_nodes(P):
+        if n == "bbox": 
+            continue
+        if n not in seen:
+            parent[n] = "bbox"  # island → direct parent bbox
+
+    # Build new attaches (child -> parent) that freeze current world placement
+    bb_min, bb_size = _ir_bbox_min_and_size(P)
+    new_attaches: List[Dict[str, Any]] = []
+
+    for child, par in parent.items():
+        if child == "bbox":
+            continue
+        oA = world_min[child]                  # current child min-corner (world)
+        sA = _ir_spec_size(P, child)
+
+        if par == "bbox":
+            oB, sB = bb_min, bb_size
+        else:
+            oB = world_min[par]
+            sB = _ir_spec_size(P, par)
+
+        vA = np.array([0.0, 0.0, 0.0], dtype=float)   # child min corner
+        vB = (oA + sA * vA - oB) / np.maximum(sB, 1e-12)
+
+        new_attaches.append({
+            "a": child, "b": par,
+            "x1": float(vA[0]), "y1": float(vA[1]), "z1": float(vA[2]),
+            "x2": float(vB[0]), "y2": float(vB[1]), "z2": float(vB[2]),
+        })
+
+    # Replace attaches with the normalized tree
+    P["attach"] = new_attaches
+
+def normalize_attaches_file(ir_path: Path) -> Path:
+    """
+    Load IR, normalize attaches to parent tree in place, and write a sibling
+    file with suffix '_parenttree.json'. Return new path.
+    """
+    ir = json.loads(ir_path.read_text(encoding="utf-8"))
+    normalize_attaches_to_parent_tree_inplace(ir)
+    out_path = ir_path.with_name(ir_path.stem + "_parenttree.json")
+    out_path.write_text(json.dumps(ir, indent=2), encoding="utf-8")
+    return out_path

@@ -19,61 +19,61 @@ from program_executor import Executor
 
 def run_once():
     input_dir = Path.cwd().parent / "input"
-    out_stl   = input_dir / "sketch_model.stl"
+    ir_path   = input_dir / "sketch_program_ir.json"
 
-    # 1) Rescale & get the updated executor (bbox alignment)
-    exe = rescale_and_execute(input_dir)  # returns an Executor, but we'll refit anyway
+    # 1) Rescale & execute (this is your "old" assembly before the edit)
+    exe_old = rescale_and_execute(input_dir)  # Executor
 
-    # 2) Load strokes (points + typed feature_lines)
+    # 2) Load strokes
     sample_points, feature_lines = load_perturbed_feature_lines(input_dir)
 
     # 3) Pick the first component (prototype) in program order
-    ir_path = input_dir / "sketch_program_ir.json"
     ir = json.loads(ir_path.read_text(encoding="utf-8"))
-    first_name = ir["program"]["cuboids"][0]["var"]  # sequential order, skip 'bbox'
+    first_name = ir["program"]["cuboids"][0]["var"]
 
-    # Find that exact prototype instance in the executed assembly
-    prims = exe.primitives()  # analytic cuboids with world origin & size
+    # Find that prototype instance in the executed assembly
+    prims = exe_old.primitives()
     comp = next(p for p in prims if p.name == first_name)
+    print(f"[seed] component='{comp.name}' origin={comp.origin} size={comp.size}")
 
-    # 4) Build mask of strokes near this component  —— NEW
+    # 4) Build mask of strokes near this component
     keep_idxs, mask = stroke_mapping.strokes_near_cuboid(
         sample_points=sample_points,
         comp=comp,
-        thresh=0.5,     # tune as needed; uses same world units as the executor
+        thresh=0.5,
     )
     print(f"[mapping] strokes near '{comp.name}': {len(keep_idxs)} / {len(sample_points)}")
 
+    # 5) Visualize selection (red = selected, black = others; no axes; equal scaling)
+    stroke_mapping.plot_stroke_selection(
+        sample_points=sample_points,
+        mask=mask,
+        save_path=input_dir / f"selection_{comp.name}.png",
+        show=True
+    )
 
-    # 5) Visualize selection
-    # stroke_mapping.plot_stroke_selection(
-    #     sample_points=sample_points,
-    #     mask=mask,
-    #     save_path=input_dir / f"selection_{comp.name}.png",  # optional: save image
-    #     show=True
-    # )
-
-    # 6) Compute new cuboid params from selected strokes  —— NEW
+    # 6) Compute new cuboid params from selected strokes
     new_origin, new_size = stroke_mapping.component_params_from_selected_strokes(
         sample_points=sample_points,
         mask=mask,
-        margin=0.0,       # add padding if needed
+        margin=0.0,
         min_size_eps=1e-6
     )
+    print(f"[fit] new params for '{comp.name}': origin={new_origin.tolist()} size={new_size.tolist()}")
 
-
-    # 7) Write updated IR with this component edited  —— NEW
-    ir_path = input_dir / "sketch_program_ir.json"
+    # 7) Write updated IR with parent-preserving attach
+    #    (pass old placements so parent-side fractions are computed correctly)
+    old_min_corners = {p.name: p.origin.copy() for p in exe_old.primitives()}
     new_ir_path = write_updated_program(
         ir_path=ir_path,
         cuboid_name=comp.name,
         new_origin=new_origin,
-        new_size=new_size
+        new_size=new_size,
+        old_min_corners=old_min_corners,   # <-- important
     )
+    print(f"[ir] wrote updated program -> {new_ir_path}")
 
-
-    # 8) Load the new program and vis
-
+    # 8) Execute new IR and overlay old vs new
     ir_new = json.loads(new_ir_path.read_text(encoding="utf-8"))
     exe_new = Executor(ir_new)
 
