@@ -14,9 +14,10 @@ Public API:
 """
 
 from __future__ import annotations
-from typing import List, Tuple
+import matplotlib.pyplot as plt
 import numpy as np
-from program_executor import CuboidGeom
+from typing import Iterable
+from program_executor import Executor, CuboidGeom
 
 
 # ------------ geometry helpers ------------
@@ -94,8 +95,6 @@ def strokes_near_cuboid(sample_points: List[List[List[float]]],
     return keep_idxs, mask
 
 
-import matplotlib.pyplot as plt
-import numpy as np
 
 def plot_stroke_selection(sample_points,
                           mask,
@@ -141,6 +140,140 @@ def plot_stroke_selection(sample_points,
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_zlabel("")
+    ax.set_axis_off()
+
+    if save_path:
+        fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+
+
+
+import numpy as np
+from typing import Tuple, List
+
+def component_params_from_selected_strokes(
+    sample_points: List[List[List[float]]],
+    mask: np.ndarray,
+    margin: float = 0.0,
+    min_size_eps: float = 1e-6,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    From selected strokes (mask=True), compute an axis-aligned bounding box:
+      origin = (xmin, ymin, zmin)
+      size   = (l, w, h) = (xmax - xmin, ymax - ymin, zmax - zmin)
+
+    Args:
+      sample_points : list of strokes -> list of [x,y,z] points
+      mask          : boolean array (num_strokes,), True = selected
+      margin        : optional padding added on *both* sides along each axis
+      min_size_eps  : floor to avoid zero sizes
+
+    Returns:
+      origin (3,), size (3,) as float64 numpy arrays
+    """
+    mask = np.asarray(mask, dtype=bool)
+    if mask.shape[0] != len(sample_points):
+        raise ValueError(f"mask length {mask.shape[0]} != number of strokes {len(sample_points)}")
+
+    # Gather all points from selected strokes
+    pts_list = []
+    for i, use in enumerate(mask):
+        if not use:
+            continue
+        P = np.asarray(sample_points[i], dtype=float)
+        if P.size > 0:
+            pts_list.append(P)
+
+    if not pts_list:
+        raise ValueError("No selected strokes (mask has no True entries).")
+
+    pts = np.vstack(pts_list)  # (N,3)
+
+    # Axis-aligned bounding box
+    xyz_min = pts.min(axis=0)
+    xyz_max = pts.max(axis=0)
+
+    if margin > 0.0:
+        xyz_min = xyz_min - margin
+        xyz_max = xyz_max + margin
+
+    size = xyz_max - xyz_min
+    # Prevent degenerate sizes
+    size = np.maximum(size, min_size_eps)
+
+    origin = xyz_min.copy()  # min corner = translation
+    return origin, size
+
+
+
+
+def _collect_edges_points(prims: Iterable[CuboidGeom]) -> np.ndarray:
+    """Collect all edge endpoints from a list of cuboids into an (M,3) array."""
+    pts = []
+    for p in prims:
+        for a, b in p.edges():
+            pts.append(a)
+            pts.append(b)
+    return np.asarray(pts, dtype=float) if pts else np.zeros((0,3), dtype=float)
+
+def plot_programs_overlay(
+    exe_old: Executor,
+    exe_new: Executor,
+    save_path: str | None = None,
+    show: bool = True,
+    color_old: str = "black",
+    color_new: str = "red",
+    lw_old: float = 1.0,
+    lw_new: float = 1.5,
+):
+    """
+    Overlay wireframes of two executed programs (old vs new) in one plot.
+    - Old in `color_old`, new in `color_new`
+    - No grid/axis/ticks; equal scaling via [center - half, center + half]
+    """
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    prims_old = exe_old.primitives()
+    prims_new = exe_new.primitives()
+
+    # draw old
+    for p in prims_old:
+        for a, b in p.edges():
+            A = np.asarray(a, float); B = np.asarray(b, float)
+            ax.plot([A[0], B[0]], [A[1], B[1]], [A[2], B[2]], color=color_old, linewidth=lw_old)
+
+    # draw new
+    for p in prims_new:
+        for a, b in p.edges():
+            A = np.asarray(a, float); B = np.asarray(b, float)
+            ax.plot([A[0], B[0]], [A[1], B[1]], [A[2], B[2]], color=color_new, linewidth=lw_new)
+
+    # equal rescale using combined points
+    pts_old = _collect_edges_points(prims_old)
+    pts_new = _collect_edges_points(prims_new)
+    all_pts = np.vstack([pts_old, pts_new]) if pts_old.size and pts_new.size else (pts_old if pts_old.size else pts_new)
+    if all_pts.size:
+        x_min, y_min, z_min = all_pts.min(axis=0)
+        x_max, y_max, z_max = all_pts.max(axis=0)
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        z_center = (z_min + z_max) / 2
+        max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+        half = max_diff / 2
+
+        ax.set_xlim([x_center - half, x_center + half])
+        ax.set_ylim([y_center - half, y_center + half])
+        ax.set_zlim([z_center - half, z_center + half])
+
+    # strip everything
+    ax.grid(False)
+    ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    ax.set_xlabel(""); ax.set_ylabel(""); ax.set_zlabel("")
     ax.set_axis_off()
 
     if save_path:

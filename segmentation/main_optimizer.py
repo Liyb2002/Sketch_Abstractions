@@ -13,6 +13,8 @@ import json
 import shape_optimizer
 from shape_optimizer import load_perturbed_feature_lines, plot_strokes_and_program, rescale_and_execute
 import stroke_mapping   # <— NEW
+from program_update import write_updated_program
+from program_executor import Executor
 
 
 def run_once():
@@ -44,12 +46,44 @@ def run_once():
 
 
     # 5) Visualize selection
-    stroke_mapping.plot_stroke_selection(
+    # stroke_mapping.plot_stroke_selection(
+    #     sample_points=sample_points,
+    #     mask=mask,
+    #     save_path=input_dir / f"selection_{comp.name}.png",  # optional: save image
+    #     show=True
+    # )
+
+    # 6) Compute new cuboid params from selected strokes  —— NEW
+    new_origin, new_size = stroke_mapping.component_params_from_selected_strokes(
         sample_points=sample_points,
         mask=mask,
-        save_path=input_dir / f"selection_{comp.name}.png",  # optional: save image
+        margin=0.0,       # add padding if needed
+        min_size_eps=1e-6
+    )
+
+
+    # 7) Write updated IR with this component edited  —— NEW
+    ir_path = input_dir / "sketch_program_ir.json"
+    new_ir_path = write_updated_program(
+        ir_path=ir_path,
+        cuboid_name=comp.name,
+        new_origin=new_origin,
+        new_size=new_size
+    )
+
+
+    # 8) Load the new program and vis
+
+    ir_new = json.loads(new_ir_path.read_text(encoding="utf-8"))
+    exe_new = Executor(ir_new)
+
+    stroke_mapping.plot_programs_overlay(
+        exe_old=exe_old,
+        exe_new=exe_new,
+        save_path=input_dir / f"program_overlay_{comp.name}.png",
         show=True
     )
+
 
 if __name__ == "__main__":
     run_once()
