@@ -45,6 +45,29 @@ def run_once():
     print(f"[mapping] strokes near '{comp.name}': {len(keep_idxs)} / {len(sample_points)}")
 
     # 5) Visualize selection (red = selected, black = others; no axes; equal scaling)
+
+    shape_optimizer.plot_strokes_and_program_multiview(
+        executor=exe_old,
+        sample_points=sample_points,
+        iso_dirs=(
+            ( 1,  1,  1),
+            (-1,  1,  1),
+            ( 1, -1,  1),
+            (-1, -1,  1),
+        ),
+        image_size=(1024, 1024),
+        stroke_linewidth=1.2,
+        pad_frac=0.05,
+        out_dir=None,  # defaults to Path.cwd().parent / "SAM" / "bbx_input"
+    )
+
+    shape_optimizer.plot_strokes_and_program(
+        executor=exe_old,
+        sample_points=sample_points,
+        feature_lines=feature_lines,
+        use_optimized=False  # just the current program
+    )
+
     stroke_mapping.plot_stroke_selection(
         sample_points=sample_points,
         mask=mask,

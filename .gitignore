@@ -4,3 +4,5 @@
 *.pth
 /SAM/sam_out
 /sam_out
+/SAM/bbx_output
+/SAM/bbx_input

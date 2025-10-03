@@ -3,7 +3,7 @@
 shape_optimizer.py
 
 Step 2: Load the pre-sampled 3D strokes from
-../input/perturbed_feature_lines.json.
+../input/perturbed_lines.json.
 
 Usage:
   Imported into main_optimizer.py
@@ -13,6 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 import json
 from typing import Any, Dict, Tuple, Optional
+from typing import Iterable, List, Dict, Tuple
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 
@@ -24,7 +27,7 @@ from typing import Any, Dict, Tuple, Optional
 # 6)Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 
 def load_perturbed_feature_lines(input_dir: Path):
-    path_sampled_points = input_dir / "perturbed_feature_lines.json"
+    path_sampled_points = input_dir / "perturbed_lines.json"
     path_feature_lines = input_dir / "feature_lines.json"
 
     with open(path_sampled_points, "r", encoding="utf-8") as f:
@@ -674,3 +677,156 @@ def normalize_attaches_file(ir_path: Path) -> Path:
     out_path = ir_path.with_name(ir_path.stem + "_parenttree.json")
     out_path.write_text(json.dumps(ir, indent=2), encoding="utf-8")
     return out_path
+
+
+
+
+
+# ====== Multi-view export for SAM pre-segmentation ======
+
+def plot_strokes_and_program_multiview(
+    executor,
+    sample_points: List[List[List[float]]],
+    *,
+    iso_dirs: Tuple[Tuple[float,float,float], ...] = (
+        ( 1,  1,  1),
+        (-1,  1,  1),
+        ( 1, -1,  1),
+        (-1, -1,  1),
+    ),
+    image_size: Tuple[int, int] = (1024, 1024),
+    stroke_linewidth: float = 1.2,
+    pad_frac: float = 0.05,
+    out_dir: Path | None = None,
+) -> None:
+    """
+    Render strokes-only PNGs from multiple *orthographic* isometric directions and
+    save one JSON per view with program cuboid bounding boxes in pixel coords.
+
+    Files written (index i corresponds to iso_dirs[i]):
+      <out_dir>/<i>.png   # strokes only
+      <out_dir>/<i>.json  # {"size":[W,H],"boxes":[{"name":..., "bbox":[xmin,ymin,xmax,ymax]}, ...]}
+
+    Pixel coords origin is top-left. No axes/grid/ticks are drawn.
+    """
+    W, H = int(image_size[0]), int(image_size[1])
+    if out_dir is None:
+        out_dir = Path.cwd().parent / "SAM" / "bbx_input"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- Collect cuboid 8-corner sets (world) ----
+    cuboids = []
+    for name, inst in executor.instances.items():
+        if name == "bbox":
+            continue
+        o = inst.T[:3, 3].astype(float)
+        s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], float)
+        x0, y0, z0 = o
+        l,  w,  h  = s
+        x1, y1, z1 = x0 + l, y0 + w, z0 + h
+        corners = np.array([
+            [x0,y0,z0],[x1,y0,z0],[x0,y1,z0],[x1,y1,z0],
+            [x0,y0,z1],[x1,y0,z1],[x0,y1,z1],[x1,y1,z1]
+        ], float)  # (8,3)
+        cuboids.append((name, corners))
+
+    # ---- Flatten stroke points once (world) ----
+    def flatten_strokes_3d(strokes) -> np.ndarray:
+        out = []
+        for s in strokes:
+            a = np.asarray(s, float)
+            if a.ndim == 2 and a.shape[1] == 3 and a.shape[0] > 0:
+                out.append(a)
+        return np.vstack(out) if out else np.zeros((0,3), float)
+
+    P3_all = flatten_strokes_3d(sample_points)
+
+    # ---- Orthographic projection from a camera direction ----
+    def ortho_project(P3: np.ndarray, cam_dir: np.ndarray) -> np.ndarray:
+        """
+        cam_dir: viewing direction (camera at +∞ along cam_dir looking to origin).
+        Build an ONB: right=u, up=v, forward=w=normalized(cam_dir).
+        Project points onto the plane spanned by (u,v): (dot(p,u), dot(p,v)).
+        """
+        w = cam_dir / (np.linalg.norm(cam_dir) + 1e-12)
+        # choose a robust world-up that's not collinear with w
+        world_up = np.array([0.0, 0.0, 1.0], float)
+        if abs(np.dot(w, world_up)) > 0.95:
+            world_up = np.array([1.0, 0.0, 0.0], float)
+        u = np.cross(world_up, w)
+        u /= (np.linalg.norm(u) + 1e-12)
+        v = np.cross(w, u)
+        # (u,v) is our 2D basis; forward w is dropped (orthographic)
+        x = P3 @ u
+        y = P3 @ v
+        return np.stack([x, y], axis=1)  # (N,2)
+
+    # ---- Bounds & pixel mapping per view (uniform scale, padding, centered) ----
+    def compute_mapping(P2_all: np.ndarray):
+        if P2_all.size == 0:
+            xmin=ymin=0.0; xmax=ymax=1.0
+        else:
+            xmin, ymin = P2_all.min(axis=0)
+            xmax, ymax = P2_all.max(axis=0)
+        span = max(xmax - xmin, ymax - ymin, 1e-9)
+        pad = pad_frac * span
+        xmin -= pad; xmax += pad
+        ymin -= pad; ymax += pad
+        span_pad = max(xmax - xmin, ymax - ymin)
+        s = min(W / span_pad, H / span_pad)
+        content_w = s * (xmax - xmin)
+        content_h = s * (ymax - ymin)
+        mx = 0.5 * (W - content_w)
+        my = 0.5 * (H - content_h)
+        return (xmin, xmax, ymin, ymax), s, s, mx, my
+
+    def world2pix(P2: np.ndarray, bounds, sx, sy, mx, my) -> np.ndarray:
+        xmin, xmax, ymin, ymax = bounds
+        x = sx * (P2[:, 0] - xmin) + mx
+        y = sy * (P2[:, 1] - ymin) + my
+        y_pix = H - y  # top-left origin
+        return np.stack([x, y_pix], axis=1)
+
+    # ---- Render/save per view ----
+    for i, d in enumerate(iso_dirs):
+        cam_dir = np.asarray(d, float)
+        # project strokes
+        P2_strokes = []
+        for s in sample_points:
+            a = np.asarray(s, float)
+            if a.ndim != 2 or a.shape[1] != 3 or a.shape[0] < 2:
+                continue
+            P2_strokes.append(ortho_project(a, cam_dir))
+        P2_all_for_bounds = ortho_project(P3_all, cam_dir) if P3_all.size else np.zeros((0,2), float)
+
+        bounds2d, sx, sy, mx, my = compute_mapping(P2_all_for_bounds)
+
+        # ---- strokes-only PNG ----
+        fig = plt.figure(figsize=(W/100.0, H/100.0), dpi=100)
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0, W); ax.set_ylim(0, H); ax.invert_yaxis()
+        ax.axis("off")
+        for P2 in P2_strokes:
+            PP = world2pix(P2, bounds2d, sx, sy, mx, my)
+            ax.plot(PP[:, 0], PP[:, 1], "-", linewidth=stroke_linewidth,
+                    color="black", solid_capstyle="round")
+        png_path = out_dir / f"{i}.png"
+        fig.savefig(png_path, dpi=100, facecolor="white")
+        plt.close(fig)
+
+        # ---- per-view bbox JSON (all cuboids) ----
+        boxes = []
+        for name, corners in cuboids:
+            P2 = ortho_project(corners, cam_dir)          # (8,2)
+            PP = world2pix(P2, bounds2d, sx, sy, mx, my)  # (8,2)
+            xmin = float(np.min(PP[:, 0])); xmax = float(np.max(PP[:, 0]))
+            ymin = float(np.min(PP[:, 1])); ymax = float(np.max(PP[:, 1]))
+            # clamp to image bounds
+            xmin = max(0.0, min(xmin, W)); xmax = max(0.0, min(xmax, W))
+            ymin = max(0.0, min(ymin, H)); ymax = max(0.0, min(ymax, H))
+            boxes.append({"name": name, "bbox": [xmin, ymin, xmax, ymax]})
+
+        json_path = out_dir / f"{i}.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"size": [W, H], "boxes": boxes}, f, indent=2)
+

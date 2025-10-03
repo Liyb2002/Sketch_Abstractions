@@ -482,8 +482,8 @@ def save_overview_info(
             shutil.copy2(src, save_dir / fname)
 
     # Copy the feature lines
-    with open(save_dir / "perturbed_feature_lines.json", "w", encoding="utf-8") as f:
-        json.dump(perturbed_feature_lines, f, indent=2)
+    with open(save_dir / "perturbed_lines.json", "w", encoding="utf-8") as f:
+        json.dump(perturbed_feature_lines + perturbed_construction_lines, f, indent=2)
     with open(save_dir / "feature_lines.json", "w", encoding="utf-8") as f:
         json.dump(feature_lines, f, indent=2)
 
