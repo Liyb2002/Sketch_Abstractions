@@ -1,4 +1,6 @@
 /input
 *.stl
 *.step
-
+*.pth
+/SAM/sam_out
+/sam_out
