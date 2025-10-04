@@ -850,7 +850,6 @@ def plot_strokes_and_program_multiview(
 
 
 
-
 def plot_strokes_and_program_mask(
     executor,
     sample_points: List[List[List[float]]],
@@ -865,35 +864,38 @@ def plot_strokes_and_program_mask(
     stroke_linewidth: float = 1.6,
     pad_frac: float = 0.05,
     out_dir: Path|None = None,
-    box_frame_origin: str = "min"
+    box_frame_origin: str = "min",   # or "center"
 ) -> None:
     """
     Render strokes-only PNGs and component-specific non-axis-aligned prior masks
-    by projecting the full 3D program into orthographic 2D views.
+    (projected 3D cuboids, orthographic) for each view.
 
     For each view index i:
-      bbx_mask_input/{i}.png                  # strokes-only
-      bbx_mask_input/{i}_{component}.png      # binary mask (0/255) for each component
+      bbx_mask_input/{i}.png                 # strokes-only
+      bbx_mask_input/{i}_{component}.png     # binary mask (0/255) per component
     """
     W, H = int(image_size[0]), int(image_size[1])
     if out_dir is None:
-        out_dir = Path.cwd().parent / "SAM" / "bbx_mask_input"
+        out_dir = Path.cwd() / "bbx_mask_input"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- utilities ---
     def local_corners(l, w, h, origin="min"):
         if origin == "center":
-            xs = [-0.5*l, 0.5*l]
-            ys = [-0.5*w, 0.5*w]
-            zs = [-0.5*h, 0.5*h]
+            xs = [-0.5*l, 0.5*l]; ys = [-0.5*w, 0.5*w]; zs = [-0.5*h, 0.5*h]
         else:
             xs = [0, l]; ys = [0, w]; zs = [0, h]
-        cc = np.array([[x,y,z,1.0] for z in zs for y in ys for x in xs], dtype=float)
-        return cc
+        # order: z0 then z1; 8 corners (homogeneous)
+        return np.array([[x,y,z,1.0] for z in zs for y in ys for x in xs], dtype=float)
 
+    # faces (indices into the 8-corner array above)
     FACES = [
-        [0,1,3,2], [4,5,7,6], [0,1,5,4],
-        [2,3,7,6], [0,2,6,4], [1,3,7,5]
+        [0,1,3,2],  # bottom
+        [4,5,7,6],  # top
+        [0,1,5,4],  # +x
+        [2,3,7,6],  # -x
+        [0,2,6,4],  # +y
+        [1,3,7,5],  # -y
     ]
 
     def ortho_basis(cam_dir: np.ndarray):
@@ -910,7 +912,10 @@ def plot_strokes_and_program_mask(
         return np.stack([x,y], axis=1)
 
     def compute_mapping(P2_all: np.ndarray):
-        xmin,ymin = P2_all.min(axis=0); xmax,ymax = P2_all.max(axis=0)
+        if P2_all.size == 0:
+            xmin=ymin=0.0; xmax=ymax=1.0
+        else:
+            xmin, ymin = P2_all.min(axis=0); xmax, ymax = P2_all.max(axis=0)
         span = max(xmax-xmin, ymax-ymin, 1e-9)
         pad = pad_frac*span
         xmin -= pad; xmax += pad; ymin -= pad; ymax += pad
@@ -922,47 +927,56 @@ def plot_strokes_and_program_mask(
 
     def world2pix(P2: np.ndarray, origin, s, mx, my):
         xmin,ymin = origin
-        x = s*(P2[:,0]-xmin)+mx
-        y = s*(P2[:,1]-ymin)+my
-        return np.stack([x, H-y], axis=1)
+        x = s*(P2[:,0]-xmin) + mx
+        y = s*(P2[:,1]-ymin) + my
+        # IMPORTANT: pixel coordinates: top-left origin -> flip y
+        return np.stack([x, H - y], axis=1)
 
-    # --- flatten strokes ---
-    P3_all = np.vstack([np.asarray(s,float) for s in sample_points if len(s)>0]) if sample_points else np.zeros((0,3))
+    # --- flatten strokes (world) ---
+    P3_all = np.vstack([np.asarray(s, float) for s in sample_points if len(s)>0]) \
+             if sample_points else np.zeros((0,3))
 
     # --- process views ---
     for i, d in enumerate(iso_dirs):
-        cam_dir = np.asarray(d,float)
-        u,v = ortho_basis(cam_dir)
+        cam_dir = np.asarray(d, float)
+        u, v = ortho_basis(cam_dir)
 
-        # strokes
-        P2_all = project_points(P3_all, u,v) if P3_all.size else np.zeros((0,2))
-        origin, s, mx, my = compute_mapping(P2_all if P2_all.size else np.array([[0,0],[1,1]]))
+        # 1) determine mapping from all stroke points (if none, use a dummy box)
+        P2_all = project_points(P3_all, u, v) if P3_all.size else np.array([[0.0,0.0],[1.0,1.0]])
+        origin, s, mx, my = compute_mapping(P2_all)
 
-        # strokes-only image
-        fig = plt.figure(figsize=(W/100,H/100), dpi=100)
-        ax = fig.add_axes([0,0,1,1]); ax.set_xlim(0,W); ax.set_ylim(0,H)
+        # 2) strokes-only PNG (Matplotlib display must invert y to match pixels)
+        fig = plt.figure(figsize=(W/100, H/100), dpi=100)
+        ax = fig.add_axes([0,0,1,1])
+        ax.set_xlim(0, W); ax.set_ylim(0, H)
         ax.axis("off")
+        ax.invert_yaxis()  # <-- FIX: make display use top-left origin
+
         for s_pts in sample_points:
-            a = np.asarray(s_pts,float)
-            if a.shape[1]!=3: continue
-            P2 = project_points(a,u,v)
-            PP = world2pix(P2, origin,s,mx,my)
-            ax.plot(PP[:,0], PP[:,1], "-", color="black", linewidth=stroke_linewidth)
-        fig.savefig(out_dir/f"{i}.png", dpi=100, facecolor="white")
+            a = np.asarray(s_pts, float)
+            if a.ndim != 2 or a.shape[1] != 3 or a.shape[0] < 2: 
+                continue
+            P2 = project_points(a, u, v)
+            PP = world2pix(P2, origin, s, mx, my)  # [x, y_pix]
+            ax.plot(PP[:,0], PP[:,1], "-", color="black", linewidth=stroke_linewidth, solid_capstyle="round")
+
+        fig.savefig(out_dir / f"{i}.png", dpi=100, facecolor="white")
         plt.close(fig)
 
-        # masks
+        # 3) per-component masks (OpenCV uses top-left origin, matches world2pix)
         for name, inst in executor.instances.items():
-            if name=="bbox": continue
-            l,w,h = float(inst.spec.l), float(inst.spec.w), float(inst.spec.h)
-            T = np.asarray(inst.T,float)
-            lc = local_corners(l,w,h, box_frame_origin) # (8,4)
-            wc = (T @ lc.T).T[:,:3]
-            P2 = project_points(wc,u,v)
-            PP = world2pix(P2, origin,s,mx,my)
+            if name == "bbox":
+                continue
+            l, w, h = float(inst.spec.l), float(inst.spec.w), float(inst.spec.h)
+            T = np.asarray(inst.T, float)           # (4,4)
 
-            mask = np.zeros((H,W), np.uint8)
+            lc = local_corners(l, w, h, box_frame_origin)   # (8,4) local
+            wc = (T @ lc.T).T[:, :3]                         # (8,3) world
+            P2 = project_points(wc, u, v)
+            PP = world2pix(P2, origin, s, mx, my)            # (8,2) pixels
+
+            mask = np.zeros((H, W), np.uint8)
             for face in FACES:
                 pts = PP[face].astype(np.int32)
-                cv2.fillPoly(mask,[pts],255)
-            cv2.imwrite(str(out_dir/f"{i}_{name}.png"), mask)
+                cv2.fillPoly(mask, [pts], 255)
+            cv2.imwrite(str(out_dir / f"{i}_{name}.png"), mask)
