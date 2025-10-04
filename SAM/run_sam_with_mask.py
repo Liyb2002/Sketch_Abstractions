@@ -2,92 +2,61 @@
 """
 run_sam_with_mask.py
 
-Reads paired inputs from:  ./bbx_input/{k}.png and ./bbx_input/{k}.json
-  JSON format:
-  {
-    "size": [H, W],        # optional, used for coordinate scaling if mismatched
-    "boxes": [
-      {"name":"seat_slab1", "bbox":[x0,y0,x1,y1]}, ...
-    ]
-  }
+Refine prior (non-axis-aligned) masks with SAM.
 
-SAM weights expected at:   ./sam_vit_h_4b8939.pth
-Writes outputs to:         ./bbx_output/
-  - {k}_{name}_mask.png     (binary mask 0/255)
-  - {k}_overlay.png         (colored contours for all parts)
-  - {k}_parts.json          (per-part bbox, area, RLE)
+Inputs (in ./bbx_mask_input):
+  - {k}.png                 # base image for view k  (k is an integer: 0,1,2,...)
+  - {k}_{name}.png          # binary prior(s) per component, 0/255 or 0/1
 
-Works well on Mac M-series (uses SamPredictor; no auto generator).
+Outputs (in ./bbx_mask_output):
+  - {k}_{name}_mask.png     # refined binary mask (0/255)
+  - {k}_overlay.png         # colored overlay of all refined parts
+  - {k}_parts.json          # metadata (bbox, area, score, RLE per part)
+
+Env (optional):
+  - SAM_MODEL_TYPE   (default: "vit_h")
+  - SAM_CHECKPOINT   (default: "./sam_vit_h_4b8939.pth")
 """
 
 from pathlib import Path
-import os, json
+import os, re, json
 import numpy as np
 import cv2
 import torch
-
 from segment_anything import sam_model_registry, SamPredictor
 
-
-ROOT = Path.cwd()
-IN_DIR  = ROOT / "bbx_input"
-OUT_DIR = ROOT / "bbx_output"
+# --- paths ---
+ROOT    = Path.cwd()
+IN_DIR  = ROOT / "bbx_mask_input"
+OUT_DIR = ROOT / "bbx_mask_output"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Model config (you can override via env vars)
+# --- model config ---
 SAM_MODEL_TYPE = os.getenv("SAM_MODEL_TYPE", "vit_h")
 SAM_CHECKPOINT = os.getenv("SAM_CHECKPOINT", str(ROOT / "sam_vit_h_4b8939.pth"))
 
-# ------------- helpers -------------
-def pick_device() -> str:
+# --- helpers ---
+def pick_device():
     if torch.backends.mps.is_available():
         return "mps"
     if torch.cuda.is_available():
         return "cuda"
     return "cpu"
 
-def load_boxes_json(path: Path):
-    data = json.loads(path.read_text())
-    # Expected: {"size":[H,W], "boxes":[{"name":..., "bbox":[x0,y0,x1,y1]}, ...]}
-    Hjson, Wjson = None, None
-    if "size" in data and isinstance(data["size"], (list, tuple)) and len(data["size"]) == 2:
-        Hjson, Wjson = int(round(float(data["size"][0]))), int(round(float(data["size"][1])))
-    boxes = []
-    for item in data.get("boxes", []):
-        name = item.get("name")
-        x0, y0, x1, y1 = [float(v) for v in item.get("bbox", [0,0,0,0])]
-        boxes.append({"name": name, "bbox": [x0, y0, x1, y1]})
-    return (Hjson, Wjson), boxes
-
-def scale_box(box, src_wh, dst_wh):
-    """Scale [x0,y0,x1,y1] from (Wsrc,Hsrc) to (Wdst,Hdst) if needed."""
-    x0, y0, x1, y1 = box
-    Wsrc, Hsrc = src_wh
-    Wdst, Hdst = dst_wh
-    if Wsrc == 0 or Hsrc == 0:
-        return [x0, y0, x1, y1]
-    sx, sy = Wdst / Wsrc, Hdst / Hsrc
-    return [x0 * sx, y0 * sy, x1 * sx, y1 * sy]
-
-def clip_box(box, w, h):
-    x0, y0, x1, y1 = box
-    x0 = float(np.clip(x0, 0, w-1))
-    x1 = float(np.clip(x1, 0, w-1))
-    y0 = float(np.clip(y0, 0, h-1))
-    y1 = float(np.clip(y1, 0, h-1))
-    if x1 < x0: x0, x1 = x1, x0
-    if y1 < y0: y0, y1 = y1, y0
-    return [x0, y0, x1, y1]
+def name_color(i: int):
+    hue = (37 * (i + 1)) % 180
+    hsv = np.uint8([[[hue, 220, 255]]])
+    return tuple(int(c) for c in cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0])
 
 def mask_bbox(seg: np.ndarray):
     ys, xs = np.where(seg)
     if ys.size == 0:
-        return [0,0,0,0]
-    x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+        return [0, 0, 0, 0]
+    x0, x1 = xs.min(), xs.max()
+    y0, y1 = ys.min(), ys.max()
     return [int(x0), int(y0), int(x1 - x0 + 1), int(y1 - y0 + 1)]
 
 def rle_encode_boolmask(mask_bool: np.ndarray):
-    """COCO RLE if pycocotools is present; else simple uncompressed RLE."""
     try:
         from pycocotools import mask as mutils
         rle = mutils.encode(np.asfortranarray(mask_bool.astype(np.uint8)))
@@ -95,7 +64,9 @@ def rle_encode_boolmask(mask_bool: np.ndarray):
         return rle
     except Exception:
         arr = np.asfortranarray(mask_bool).reshape((-1,), order="F").astype(np.uint8)
-        counts, prev, run = [], 0, 0
+        counts = []
+        prev = 0
+        run = 0
         for v in arr:
             if v != prev:
                 counts.append(run)
@@ -106,94 +77,131 @@ def rle_encode_boolmask(mask_bool: np.ndarray):
         counts.append(run)
         return {"size": list(mask_bool.shape), "counts": counts}
 
-def name_color(i: int):
-    hue = (37 * (i+1)) % 180
-    hsv = np.uint8([[[hue, 220, 255]]])
-    return tuple(int(c) for c in cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0,0])
+def list_views(in_dir: Path):
+    # base images named like 0.png, 1.png, ...
+    return sorted(
+        [p for p in in_dir.glob("*.png") if re.fullmatch(r"\d+\.png", p.name)],
+        key=lambda p: int(p.stem),
+    )
 
-# ------------- main -------------
+# Convert a full-res prior (HxW, 0..255) into SAM mask logits [1,256,256]
+# aligned with the current image embedding in predictor.
+def prior_to_mask_input(prior_u8: np.ndarray, predictor: SamPredictor) -> torch.Tensor:
+    H, W = prior_u8.shape
+    prob = (prior_u8.astype(np.float32) / 255.0).clip(0.0, 1.0)
+    prob = cv2.GaussianBlur(prob, (3, 3), 0)
+
+    enc_size = predictor.model.image_encoder.img_size  # usually 1024
+    scale = enc_size / max(H, W)
+    newh, neww = int(round(H * scale)), int(round(W * scale))
+    prob_resized = cv2.resize(prob, (neww, newh), interpolation=cv2.INTER_LINEAR)
+
+    pad_h, pad_w = enc_size - newh, enc_size - neww
+    prob_square = cv2.copyMakeBorder(
+        prob_resized, 0, pad_h, 0, pad_w, borderType=cv2.BORDER_CONSTANT, value=0.0
+    )
+
+    lowres = cv2.resize(prob_square, (256, 256), interpolation=cv2.INTER_LINEAR)
+
+    eps = 1e-4
+    lowres = np.clip(lowres, eps, 1.0 - eps)
+    logits = np.log(lowres / (1.0 - lowres)).astype(np.float32)
+
+    # IMPORTANT: return [1,256,256] (no channel dim) — SAM will add it internally
+    t = torch.from_numpy(logits)[None, ...]
+    return t.to(next(predictor.model.parameters()).device)
+
+# --- main ---
 def main():
     device = pick_device()
     print(f"[INFO] device={device}")
     if not IN_DIR.exists():
-        raise FileNotFoundError(f"Input folder not found: {IN_DIR}")
+        raise FileNotFoundError(f"Missing input dir: {IN_DIR}")
 
-    # Build SAM predictor
+    # build SAM
     sam = sam_model_registry[SAM_MODEL_TYPE](checkpoint=SAM_CHECKPOINT).to(device)
     predictor = SamPredictor(sam)
 
-    # Pair images with JSONs
-    images = sorted([p for p in IN_DIR.glob("*.png")], key=lambda p: int(p.stem) if p.stem.isdigit() else p.stem)
+    # iterate views
+    images = list_views(IN_DIR)
     if not images:
-        raise FileNotFoundError(f"No .png images in {IN_DIR}")
+        raise FileNotFoundError(f"No base images like '0.png' in {IN_DIR}")
 
-    for img_path in images:
-        stem = img_path.stem
-        json_path = IN_DIR / f"{stem}.json"
-        if not json_path.exists():
-            print(f"[WARN] Missing JSON for {img_path.name}; skipping.")
-            continue
-
-        # Load image
-        bgr = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
+    for ipath in images:
+        stem = ipath.stem
+        bgr = cv2.imread(str(ipath), cv2.IMREAD_COLOR)
         if bgr is None:
-            print(f"[WARN] Could not read {img_path}; skipping.")
+            print(f"[WARN] cannot read {ipath}, skipping")
             continue
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         H, W = rgb.shape[:2]
 
-        # Load boxes (+ optional size for scaling)
-        (Hjson, Wjson), boxes = load_boxes_json(json_path)
-        if not boxes:
-            print(f"[WARN] No boxes in {json_path.name}; skipping.")
-            continue
-
-        # Set image in predictor
         predictor.set_image(rgb)
+
+        # find priors: files {stem}_*.png (excluding the base itself)
+        priors = sorted([p for p in IN_DIR.glob(f"{stem}_*.png")])
+        if not priors:
+            print(f"[WARN] no priors for view {stem} in {IN_DIR}")
+            continue
 
         overlay = bgr.copy()
         parts_items = []
-        for idx, entry in enumerate(boxes):
-            name = entry["name"] or f"part_{idx}"
-            # If size provided, scale coords to actual image size
-            box = entry["bbox"]
-            if Hjson is not None and Wjson is not None and (Hjson != H or Wjson != W):
-                box = scale_box(box, (Wjson, Hjson), (W, H))
-            # Clip to image
-            x0, y0, x1, y1 = clip_box(box, W, H)
+
+        for idx, pth in enumerate(priors):
+            name = pth.stem[len(stem) + 1:] if pth.stem.startswith(f"{stem}_") else pth.stem
+
+            prior = cv2.imread(str(pth), cv2.IMREAD_GRAYSCALE)
+            if prior is None:
+                print(f"[WARN] cannot read prior {pth}")
+                continue
+            if prior.shape[:2] != (H, W):
+                # keep nearest to preserve edges
+                prior = cv2.resize(prior, (W, H), interpolation=cv2.INTER_NEAREST)
+
+            # optional loose focus box from prior bounds (helps decoder)
+            ys, xs = np.where(prior > 0)
+            if ys.size == 0:
+                continue
+            x0, x1 = int(xs.min()), int(xs.max())
+            y0, y1 = int(ys.min()), int(ys.max())
             box_np = np.array([x0, y0, x1, y1], dtype=np.float32)
 
-            # Predict masks for this box, choose best by score
-            masks, scores, _ = predictor.predict(box=box_np, multimask_output=True)
-            best = int(np.argmax(scores))
-            seg = masks[best].astype(bool)
+            # build mask_input logits (shape [1,256,256])
+            mask_input = prior_to_mask_input(prior, predictor)
 
-            # Save per-part binary mask
+            # predict single refined mask
+            masks, scores, _ = predictor.predict(
+                box=box_np,                 # optional but useful
+                mask_input=mask_input,      # NOTE: [1,256,256]
+                multimask_output=False
+            )
+            seg = masks[0].astype(bool)
+            score = float(scores[0])
+
+            # save binary mask
             out_mask = (seg.astype(np.uint8)) * 255
             cv2.imwrite(str(OUT_DIR / f"{stem}_{name}_mask.png"), out_mask)
 
-            # Draw contour on overlay
+            # overlay (fill + contour)
             color = name_color(idx)
+            overlay[seg] = (0.45 * np.array(color, np.uint8) + 0.55 * overlay[seg]).astype(np.uint8)
             cnts, _ = cv2.findContours(out_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(overlay, cnts, -1, color, 2)
-            # Also draw the (possibly scaled) box lightly for reference
-            cv2.rectangle(overlay, (int(x0), int(y0)), (int(x1), int(y1)), color, 1, lineType=cv2.LINE_AA)
+            cv2.drawContours(overlay, cnts, -1, color, 2, lineType=cv2.LINE_AA)
 
-            # Collect JSON info
             parts_items.append({
                 "name": name,
-                "score": float(scores[best]),
+                "score": score,
                 "bbox": mask_bbox(seg),
                 "area": int(seg.sum()),
                 "rle": rle_encode_boolmask(seg),
             })
 
-        # Save overlay + parts.json
+        # write overlay + manifest
         cv2.imwrite(str(OUT_DIR / f"{stem}_overlay.png"), overlay)
         with open(OUT_DIR / f"{stem}_parts.json", "w", encoding="utf-8") as f:
             json.dump({"image": f"{stem}.png", "height": H, "width": W, "parts": parts_items}, f, indent=2)
 
-        print(f"[OK] {stem}: wrote {len(parts_items)} parts to {OUT_DIR}")
+        print(f"[OK] {stem}: refined {len(parts_items)} parts -> {OUT_DIR}")
 
 if __name__ == "__main__":
     main()

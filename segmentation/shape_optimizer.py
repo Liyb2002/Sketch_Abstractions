@@ -16,6 +16,7 @@ from typing import Any, Dict, Tuple, Optional
 from typing import Iterable, List, Dict, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
+import cv2
 
 
 
@@ -688,7 +689,7 @@ def plot_strokes_and_program_multiview(
     executor,
     sample_points: List[List[List[float]]],
     *,
-    iso_dirs: Tuple[Tuple[float,float,float], ...] = (
+    iso_dirs: Tuple[Tuple[float, float, float], ...] = (
         ( 1,  1,  1),
         (-1,  1,  1),
         ( 1, -1,  1),
@@ -698,39 +699,58 @@ def plot_strokes_and_program_multiview(
     stroke_linewidth: float = 1.2,
     pad_frac: float = 0.05,
     out_dir: Path | None = None,
+    # how the spec dimensions are referenced in the local cuboid frame:
+    #  - "min": local origin at a *corner* (use [0,l]x[0,w]x[0,h])
+    #  - "center": local origin at the *center* (use [-l/2,l/2] etc.)
+    box_frame_origin: str = "min",
 ) -> None:
     """
-    Render strokes-only PNGs from multiple *orthographic* isometric directions and
-    save one JSON per view with program cuboid bounding boxes in pixel coords.
+    Render strokes-only PNGs from multiple orthographic isometric directions and
+    save one JSON per view with program cuboid bounding boxes in *pixel coords*.
 
     Files written (index i corresponds to iso_dirs[i]):
       <out_dir>/<i>.png   # strokes only
-      <out_dir>/<i>.json  # {"size":[W,H],"boxes":[{"name":..., "bbox":[xmin,ymin,xmax,ymax]}, ...]}
+      <out_dir>/<i>.json  # {"size":[H,W],"boxes":[{"name":..., "bbox":[xmin,ymin,xmax,ymax]}, ...]}
 
-    Pixel coords origin is top-left. No axes/grid/ticks are drawn.
+    Notes
+    -----
+    - Each 3D instance uses its full 4x4 transform (rotation + translation).
+    - Per view, we orthographically project the 8 world-space corners, then
+      take min/max in pixel space to build the 2D AABB SAM expects.
     """
     W, H = int(image_size[0]), int(image_size[1])
     if out_dir is None:
         out_dir = Path.cwd().parent / "SAM" / "bbx_input"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---- Collect cuboid 8-corner sets (world) ----
+    # -------- Build local-corner sets once (in each instance's local frame) --------
+    def local_corners(l, w, h, origin="min"):
+        if origin == "center":
+            hx, hy, hz = 0.5*l, 0.5*w, 0.5*h
+            xs = [-hx, +hx]
+            ys = [-hy, +hy]
+            zs = [-hz, +hz]
+        else:  # "min" (default)
+            xs = [0.0, l]
+            ys = [0.0, w]
+            zs = [0.0, h]
+        cc = np.array([[x, y, z, 1.0]
+                       for x in xs for y in ys for z in zs], dtype=float)  # (8,4)
+        return cc
+
+    # (name, world-corners 8x3)
     cuboids = []
     for name, inst in executor.instances.items():
         if name == "bbox":
             continue
-        o = inst.T[:3, 3].astype(float)
-        s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], float)
-        x0, y0, z0 = o
-        l,  w,  h  = s
-        x1, y1, z1 = x0 + l, y0 + w, z0 + h
-        corners = np.array([
-            [x0,y0,z0],[x1,y0,z0],[x0,y1,z0],[x1,y1,z0],
-            [x0,y0,z1],[x1,y0,z1],[x0,y1,z1],[x1,y1,z1]
-        ], float)  # (8,3)
-        cuboids.append((name, corners))
+        T = np.asarray(inst.T, dtype=float)      # (4,4)
+        l = float(inst.spec.l); w = float(inst.spec.w); h = float(inst.spec.h)
+        lc = local_corners(l, w, h, origin=box_frame_origin)   # (8,4) in local
+        wc_h = (T @ lc.T).T                        # (8,4) world (homogeneous)
+        wc = wc_h[:, :3] / wc_h[:, 3:4]           # (8,3)
+        cuboids.append((name, wc))
 
-    # ---- Flatten stroke points once (world) ----
+    # -------- Flatten stroke points once (world) --------
     def flatten_strokes_3d(strokes) -> np.ndarray:
         out = []
         for s in strokes:
@@ -741,27 +761,22 @@ def plot_strokes_and_program_multiview(
 
     P3_all = flatten_strokes_3d(sample_points)
 
-    # ---- Orthographic projection from a camera direction ----
+    # -------- Orthographic projection utilities --------
     def ortho_project(P3: np.ndarray, cam_dir: np.ndarray) -> np.ndarray:
         """
-        cam_dir: viewing direction (camera at +∞ along cam_dir looking to origin).
-        Build an ONB: right=u, up=v, forward=w=normalized(cam_dir).
-        Project points onto the plane spanned by (u,v): (dot(p,u), dot(p,v)).
+        cam_dir: viewing direction (camera looks along +w toward the origin at infinity).
+        Build ONB {u,v,w}. Project onto (u,v) plane: [dot(p,u), dot(p,v)].
         """
         w = cam_dir / (np.linalg.norm(cam_dir) + 1e-12)
-        # choose a robust world-up that's not collinear with w
         world_up = np.array([0.0, 0.0, 1.0], float)
         if abs(np.dot(w, world_up)) > 0.95:
             world_up = np.array([1.0, 0.0, 0.0], float)
-        u = np.cross(world_up, w)
-        u /= (np.linalg.norm(u) + 1e-12)
+        u = np.cross(world_up, w); u /= (np.linalg.norm(u) + 1e-12)
         v = np.cross(w, u)
-        # (u,v) is our 2D basis; forward w is dropped (orthographic)
         x = P3 @ u
         y = P3 @ v
         return np.stack([x, y], axis=1)  # (N,2)
 
-    # ---- Bounds & pixel mapping per view (uniform scale, padding, centered) ----
     def compute_mapping(P2_all: np.ndarray):
         if P2_all.size == 0:
             xmin=ymin=0.0; xmax=ymax=1.0
@@ -774,34 +789,34 @@ def plot_strokes_and_program_multiview(
         ymin -= pad; ymax += pad
         span_pad = max(xmax - xmin, ymax - ymin)
         s = min(W / span_pad, H / span_pad)
-        content_w = s * (xmax - xmin)
-        content_h = s * (ymax - ymin)
-        mx = 0.5 * (W - content_w)
-        my = 0.5 * (H - content_h)
+        cw = s * (xmax - xmin); ch = s * (ymax - ymin)
+        mx = 0.5 * (W - cw); my = 0.5 * (H - ch)
         return (xmin, xmax, ymin, ymax), s, s, mx, my
 
     def world2pix(P2: np.ndarray, bounds, sx, sy, mx, my) -> np.ndarray:
         xmin, xmax, ymin, ymax = bounds
         x = sx * (P2[:, 0] - xmin) + mx
         y = sy * (P2[:, 1] - ymin) + my
-        y_pix = H - y  # top-left origin
+        y_pix = H - y  # flip to top-left origin
         return np.stack([x, y_pix], axis=1)
 
-    # ---- Render/save per view ----
+    # -------- Render & export per view --------
     for i, d in enumerate(iso_dirs):
         cam_dir = np.asarray(d, float)
-        # project strokes
+
+        # strokes in view space
         P2_strokes = []
         for s in sample_points:
             a = np.asarray(s, float)
             if a.ndim != 2 or a.shape[1] != 3 or a.shape[0] < 2:
                 continue
             P2_strokes.append(ortho_project(a, cam_dir))
-        P2_all_for_bounds = ortho_project(P3_all, cam_dir) if P3_all.size else np.zeros((0,2), float)
 
+        # mapping based on all stroke points (could include cuboids too)
+        P2_all_for_bounds = ortho_project(P3_all, cam_dir) if P3_all.size else np.zeros((0,2), float)
         bounds2d, sx, sy, mx, my = compute_mapping(P2_all_for_bounds)
 
-        # ---- strokes-only PNG ----
+        # ----- strokes-only PNG -----
         fig = plt.figure(figsize=(W/100.0, H/100.0), dpi=100)
         ax = fig.add_axes([0, 0, 1, 1])
         ax.set_xlim(0, W); ax.set_ylim(0, H); ax.invert_yaxis()
@@ -814,11 +829,11 @@ def plot_strokes_and_program_multiview(
         fig.savefig(png_path, dpi=100, facecolor="white")
         plt.close(fig)
 
-        # ---- per-view bbox JSON (all cuboids) ----
+        # ----- per-view bbox JSON (all cuboids) -----
         boxes = []
-        for name, corners in cuboids:
-            P2 = ortho_project(corners, cam_dir)          # (8,2)
-            PP = world2pix(P2, bounds2d, sx, sy, mx, my)  # (8,2)
+        for name, world_corners in cuboids:
+            P2 = ortho_project(world_corners, cam_dir)       # (8,2)
+            PP = world2pix(P2, bounds2d, sx, sy, mx, my)     # (8,2) pixel coords
             xmin = float(np.min(PP[:, 0])); xmax = float(np.max(PP[:, 0]))
             ymin = float(np.min(PP[:, 1])); ymax = float(np.max(PP[:, 1]))
             # clamp to image bounds
@@ -826,7 +841,128 @@ def plot_strokes_and_program_multiview(
             ymin = max(0.0, min(ymin, H)); ymax = max(0.0, min(ymax, H))
             boxes.append({"name": name, "bbox": [xmin, ymin, xmax, ymax]})
 
+        # IMPORTANT: store size as [H, W] to match the SAM scripts that expect (H, W)
         json_path = out_dir / f"{i}.json"
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump({"size": [W, H], "boxes": boxes}, f, indent=2)
+            json.dump({"size": [H, W], "boxes": boxes}, f, indent=2)
 
+
+
+
+
+
+def plot_strokes_and_program_mask(
+    executor,
+    sample_points: List[List[List[float]]],
+    *,
+    iso_dirs: Tuple[Tuple[float,float,float], ...] = (
+        ( 1,  1,  1),
+        (-1,  1,  1),
+        ( 1, -1,  1),
+        (-1, -1,  1),
+    ),
+    image_size: Tuple[int,int] = (1024,1024),
+    stroke_linewidth: float = 1.6,
+    pad_frac: float = 0.05,
+    out_dir: Path|None = None,
+    box_frame_origin: str = "min"
+) -> None:
+    """
+    Render strokes-only PNGs and component-specific non-axis-aligned prior masks
+    by projecting the full 3D program into orthographic 2D views.
+
+    For each view index i:
+      bbx_mask_input/{i}.png                  # strokes-only
+      bbx_mask_input/{i}_{component}.png      # binary mask (0/255) for each component
+    """
+    W, H = int(image_size[0]), int(image_size[1])
+    if out_dir is None:
+        out_dir = Path.cwd().parent / "SAM" / "bbx_mask_input"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- utilities ---
+    def local_corners(l, w, h, origin="min"):
+        if origin == "center":
+            xs = [-0.5*l, 0.5*l]
+            ys = [-0.5*w, 0.5*w]
+            zs = [-0.5*h, 0.5*h]
+        else:
+            xs = [0, l]; ys = [0, w]; zs = [0, h]
+        cc = np.array([[x,y,z,1.0] for z in zs for y in ys for x in xs], dtype=float)
+        return cc
+
+    FACES = [
+        [0,1,3,2], [4,5,7,6], [0,1,5,4],
+        [2,3,7,6], [0,2,6,4], [1,3,7,5]
+    ]
+
+    def ortho_basis(cam_dir: np.ndarray):
+        wv = cam_dir / (np.linalg.norm(cam_dir)+1e-12)
+        world_up = np.array([0,0,1], float)
+        if abs(np.dot(wv, world_up)) > 0.95:
+            world_up = np.array([1,0,0], float)
+        u = np.cross(world_up, wv); u /= (np.linalg.norm(u)+1e-12)
+        v = np.cross(wv, u)
+        return u, v
+
+    def project_points(P3: np.ndarray, u: np.ndarray, v: np.ndarray):
+        x = P3 @ u; y = P3 @ v
+        return np.stack([x,y], axis=1)
+
+    def compute_mapping(P2_all: np.ndarray):
+        xmin,ymin = P2_all.min(axis=0); xmax,ymax = P2_all.max(axis=0)
+        span = max(xmax-xmin, ymax-ymin, 1e-9)
+        pad = pad_frac*span
+        xmin -= pad; xmax += pad; ymin -= pad; ymax += pad
+        span_pad = max(xmax-xmin, ymax-ymin)
+        s = min(W/span_pad, H/span_pad)
+        mx = 0.5*(W - s*(xmax-xmin))
+        my = 0.5*(H - s*(ymax-ymin))
+        return (xmin,ymin), s, mx, my
+
+    def world2pix(P2: np.ndarray, origin, s, mx, my):
+        xmin,ymin = origin
+        x = s*(P2[:,0]-xmin)+mx
+        y = s*(P2[:,1]-ymin)+my
+        return np.stack([x, H-y], axis=1)
+
+    # --- flatten strokes ---
+    P3_all = np.vstack([np.asarray(s,float) for s in sample_points if len(s)>0]) if sample_points else np.zeros((0,3))
+
+    # --- process views ---
+    for i, d in enumerate(iso_dirs):
+        cam_dir = np.asarray(d,float)
+        u,v = ortho_basis(cam_dir)
+
+        # strokes
+        P2_all = project_points(P3_all, u,v) if P3_all.size else np.zeros((0,2))
+        origin, s, mx, my = compute_mapping(P2_all if P2_all.size else np.array([[0,0],[1,1]]))
+
+        # strokes-only image
+        fig = plt.figure(figsize=(W/100,H/100), dpi=100)
+        ax = fig.add_axes([0,0,1,1]); ax.set_xlim(0,W); ax.set_ylim(0,H)
+        ax.axis("off")
+        for s_pts in sample_points:
+            a = np.asarray(s_pts,float)
+            if a.shape[1]!=3: continue
+            P2 = project_points(a,u,v)
+            PP = world2pix(P2, origin,s,mx,my)
+            ax.plot(PP[:,0], PP[:,1], "-", color="black", linewidth=stroke_linewidth)
+        fig.savefig(out_dir/f"{i}.png", dpi=100, facecolor="white")
+        plt.close(fig)
+
+        # masks
+        for name, inst in executor.instances.items():
+            if name=="bbox": continue
+            l,w,h = float(inst.spec.l), float(inst.spec.w), float(inst.spec.h)
+            T = np.asarray(inst.T,float)
+            lc = local_corners(l,w,h, box_frame_origin) # (8,4)
+            wc = (T @ lc.T).T[:,:3]
+            P2 = project_points(wc,u,v)
+            PP = world2pix(P2, origin,s,mx,my)
+
+            mask = np.zeros((H,W), np.uint8)
+            for face in FACES:
+                pts = PP[face].astype(np.int32)
+                cv2.fillPoly(mask,[pts],255)
+            cv2.imwrite(str(out_dir/f"{i}_{name}.png"), mask)

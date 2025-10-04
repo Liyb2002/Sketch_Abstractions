@@ -61,6 +61,23 @@ def run_once():
         out_dir=None,  # defaults to Path.cwd().parent / "SAM" / "bbx_input"
     )
 
+
+    # NEW: non-axis-aligned prior mask rendering
+    shape_optimizer.plot_strokes_and_program_mask(
+        executor=exe_old,
+        sample_points=sample_points,
+        iso_dirs=(
+            ( 1,  1,  1),
+            (-1,  1,  1),
+            ( 1, -1,  1),
+            (-1, -1,  1),
+        ),
+        image_size=(1024, 1024),
+        stroke_linewidth=1.2,
+        pad_frac=0.05,
+        out_dir=Path.cwd().parent / "SAM" / "bbx_mask_input"
+    )
+
     shape_optimizer.plot_strokes_and_program(
         executor=exe_old,
         sample_points=sample_points,

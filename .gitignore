@@ -6,3 +6,5 @@
 /sam_out
 /SAM/bbx_output
 /SAM/bbx_input
+/SAM/bbx_mask_output
+/SAM/bbx_mask_input
