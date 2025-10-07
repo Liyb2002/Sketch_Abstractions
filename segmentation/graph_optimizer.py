@@ -17,6 +17,8 @@ from program_update import write_updated_program
 from program_executor import Executor
 
 
+import graph_utils
+
 def run_once():
     input_dir = Path.cwd().parent / "input"
     ir_path   = input_dir / "sketch_program_ir_editted.json"
@@ -29,7 +31,8 @@ def run_once():
 
 
 
-    plot_program_only(exe_old, use_offsets=False, use_scales=False)
+    # plot_program_only(exe_old, use_offsets=False, use_scales=False)
+    graph_utils.vis_stroke_node_features(feature_lines)
 
 
 
