@@ -513,8 +513,7 @@ def _print_diagnostics(tag: str,
 
 
 # ---------- Public API ----------
-def rescale_and_execute(input_dir: Path) -> Executor:
-    ir_path   = input_dir / "sketch_program_ir.json"
+def rescale_and_execute(input_dir: Path, ir_path) -> Executor:
     info_path = input_dir / "info.json"
     if not ir_path.exists():
         raise SystemExit(f"IR not found: {ir_path}")
@@ -980,3 +979,114 @@ def plot_strokes_and_program_mask(
                 pts = PP[face].astype(np.int32)
                 cv2.fillPoly(mask, [pts], 255)
             cv2.imwrite(str(out_dir / f"{i}_{name}.png"), mask)
+
+
+
+
+def plot_program_only(
+    executor,
+    *,
+    use_offsets: bool = False,
+    use_scales: bool = False,
+    linewidth: float = 1.2,
+    color: str = "black",
+    elev: float = 22,
+    azim: float = -62,
+    figsize=(8, 7),
+):
+    """
+    Plot only the cuboid edges of the program (excluding 'bbox').
+
+    Args:
+        executor: a program_executor.Executor instance
+        use_offsets: if True, applies translations from fit_translations.json
+        use_scales: if True, applies scales from fit_scales.json
+        linewidth: line width for drawing cuboids
+        color: color of cuboid edges (default: black)
+        elev, azim: view angles for 3D visualization
+        figsize: size of the matplotlib figure
+
+    Returns:
+        (fig, ax): the matplotlib figure and 3D axis
+    """
+    import json
+    from pathlib import Path
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # ---- Load optional optimization files ----
+    offsets, scales = {}, {}
+    if use_offsets or use_scales:
+        ir_path = getattr(executor, "ir_path", None)
+        input_dir = Path(ir_path).parent if ir_path is not None else Path.cwd().parent / "input"
+
+        if use_offsets:
+            trans_file = input_dir / "fit_translations.json"
+            if trans_file.exists():
+                try:
+                    data = json.loads(trans_file.read_text())
+                    offsets = data.get("offsets_xyz", {})
+                    print(f"Loaded {len(offsets)} translation offsets.")
+                except Exception as e:
+                    print(f"[warn] Could not read fit_translations.json: {e}")
+
+        if use_scales:
+            scale_file = input_dir / "fit_scales.json"
+            if scale_file.exists():
+                try:
+                    data = json.loads(scale_file.read_text())
+                    scales = data.get("scales_lwh", {})
+                    print(f"Loaded {len(scales)} scale factors.")
+                except Exception as e:
+                    print(f"[warn] Could not read fit_scales.json: {e}")
+
+    # ---- Create figure ----
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111, projection="3d")
+    ax.view_init(elev=elev, azim=azim)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    # ---- Draw all cuboid edges ----
+    for name, inst in executor.instances.items():
+        if name == "bbox":
+            continue
+
+        o = inst.T[:3, 3].astype(float).copy()
+        s = np.array([inst.spec.l, inst.spec.w, inst.spec.h], dtype=float)
+
+        if name in offsets:
+            o = o + np.array(offsets[name], dtype=float)
+        if name in scales:
+            s = s * np.array(scales[name], dtype=float)
+
+        for p0, p1 in _cuboid_edges_from_origin_size(o, s):
+            ax.plot(
+                [p0[0], p1[0]], [p0[1], p1[1]], [p0[2], p1[2]],
+                "-", color=color, linewidth=linewidth, alpha=0.9
+            )
+
+    # ---- Match aspect ratio to bbox ----
+    L, W, H = executor.bbox.l, executor.bbox.w, executor.bbox.h
+    maxlen = max(L, W, H)
+    xmid, ymid, zmid = L / 2, W / 2, H / 2
+    ax.set_xlim(xmid - maxlen / 2, xmid + maxlen / 2)
+    ax.set_ylim(ymid - maxlen / 2, ymid + maxlen / 2)
+    ax.set_zlim(zmid - maxlen / 2, zmid + maxlen / 2)
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    # ---- Clean styling ----
+    ax.grid(False)
+    ax.set_xlabel(""); ax.set_ylabel(""); ax.set_zlabel("")
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_visible(False)
+        axis.line.set_visible(False)
+    ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    ax.set_xticklabels([]); ax.set_yticklabels([]); ax.set_zticklabels([])
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+
+    plt.show()
+    return fig, ax
