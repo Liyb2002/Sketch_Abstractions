@@ -27,12 +27,19 @@ def run_once():
     exe_old = rescale_and_execute(input_dir, ir_path)  # Executor
 
     # 2) Load strokes
-    sample_points, feature_lines = load_perturbed_feature_lines(input_dir)
+    perturbed_feature_lines, perturbed_construction_lines, feature_lines = load_perturbed_feature_lines(input_dir)
+
+
+    # 3) Prepare information
+    global_thresh = graph_utils.compute_global_threshold(feature_lines)
+    print("global_thresh", global_thresh)
 
 
 
-    # plot_program_only(exe_old, use_offsets=False, use_scales=False)
-    graph_utils.vis_stroke_node_features(feature_lines)
+
+    plot_program_only(exe_old, use_offsets=False, use_scales=False)
+    # graph_utils.vis_stroke_node_features(feature_lines)
+    graph_utils.vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines)
 
 
 

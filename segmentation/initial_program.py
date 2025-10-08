@@ -7,7 +7,7 @@ One-shot IR builder (Step1 + Step3 + Deterministic scaling using strokes AABB):
 - Uses:
     INPUT_DIR/sketch_narrative.json
     INPUT_DIR/sketch_components.json
-    INPUT_DIR/perturbed_feature_lines.json   <-- used to set bblock.min/max after Step-3
+    INPUT_DIR/stroke_lines.json   <-- used to set bblock.min/max after Step-3
 - Produces:
     INPUT_DIR/sketch_program_ir_instanced.json   (raw Step-3, before deterministic scaling)
     INPUT_DIR/sketch_program_ir.json             (final, deterministically scaled with min/max)
@@ -177,31 +177,42 @@ def check_bbox_minmax_matches(ir: Dict[str,Any], mn: Tuple[float,float,float], m
     return ", ".join(err) if err else None
 
 # ---------- Strokes AABB ----------
-def strokes_aabb(input_dir: Path) -> Tuple[Tuple[float,float,float], Tuple[float,float,float]]:
+def strokes_aabb(input_dir: Path) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
     """
-    Reads perturbed_feature_lines.json and returns (min, max) over all sampled stroke points.
-    Expected structure: List[ List[[x,y,z], ...] ] (one list per stroke).
+    Reads stroke_lines.json and returns (min, max) over all sampled stroke points.
+    Expected structure: {"perturbed_feature_lines": List[List[[x,y,z], ...]], ...}
     """
-    sp_path = input_dir / "perturbed_feature_lines.json"
+    sp_path = input_dir / "stroke_lines.json"
     if not sp_path.exists():
         raise SystemExit(f"Missing {sp_path} — required for deterministic scaling.")
+    
+    # Load the combined stroke data
     data = json.loads(sp_path.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        raise SystemExit("perturbed_feature_lines.json must be a list of strokes")
-    mins = [float("inf")]*3; maxs = [float("-inf")]*3
+    perturbed_feature_lines = data.get("perturbed_feature_lines")
+    if not isinstance(perturbed_feature_lines, list):
+        raise SystemExit("stroke_lines.json must contain a list under 'perturbed_feature_lines'")
+    
+    mins = [float("inf")] * 3
+    maxs = [float("-inf")] * 3
     valid_pts = 0
-    for s in data:
-        if not isinstance(s, list): continue
+
+    # Traverse all [x, y, z] points
+    for s in perturbed_feature_lines:
+        if not isinstance(s, list):
+            continue
         for p in s:
-            if not (isinstance(p, (list,tuple)) and len(p)==3): continue
+            if not (isinstance(p, (list, tuple)) and len(p) == 3):
+                continue
             valid_pts += 1
             for i in range(3):
                 v = float(p[i])
-                if v < mins[i]: mins[i]=v
-                if v > maxs[i]: maxs[i]=v
+                if v < mins[i]: mins[i] = v
+                if v > maxs[i]: maxs[i] = v
+
     if valid_pts == 0:
-        raise SystemExit("No valid [x,y,z] points found in perturbed_feature_lines.json")
-    return (mins[0],mins[1],mins[2]), (maxs[0],maxs[1],maxs[2])
+        raise SystemExit("No valid [x,y,z] points found in 'perturbed_feature_lines' within stroke_lines.json")
+    
+    return (mins[0], mins[1], mins[2]), (maxs[0], maxs[1], maxs[2])
 
 # ---------- Prompts (Step-1 only) ----------
 
@@ -580,12 +591,12 @@ def main():
 
     narrative_path = INPUT_DIR / "sketch_narrative.json"
     components_path = INPUT_DIR / "sketch_components.json"
-    strokes_path = INPUT_DIR / "perturbed_feature_lines.json"
+    strokes_path = INPUT_DIR / "stroke_lines.json"
 
     if not narrative_path.exists() or not components_path.exists():
         raise SystemExit("Missing sketch_narrative.json or sketch_components.json in INPUT_DIR.")
     if not strokes_path.exists():
-        raise SystemExit("Missing perturbed_feature_lines.json in INPUT_DIR.")
+        raise SystemExit("Missing stroke_lines.json in INPUT_DIR.")
 
     narrative = json.loads(narrative_path.read_text(encoding="utf-8"))["narrative"]
     components = json.loads(components_path.read_text(encoding="utf-8"))["components"]

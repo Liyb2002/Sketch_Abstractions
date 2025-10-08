@@ -28,18 +28,24 @@ import cv2
 # 6)Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 
 def load_perturbed_feature_lines(input_dir: Path):
-    path_sampled_points = input_dir / "perturbed_lines.json"
-    path_feature_lines = input_dir / "feature_lines.json"
+    path_stroke_lines = input_dir / "stroke_lines.json"
 
-    with open(path_sampled_points, "r", encoding="utf-8") as f:
-        sample_points = json.load(f)
+    # Load all line data from one file
+    with open(path_stroke_lines, "r", encoding="utf-8") as f:
+        stroke_lines = json.load(f)
 
-    with open(path_feature_lines, "r", encoding="utf-8") as f:
-        feature_lines = json.load(f)
+    # Extract each line type
+    perturbed_feature_lines = stroke_lines.get("perturbed_feature_lines", [])
+    perturbed_construction_lines = stroke_lines.get("perturbed_construction_lines", [])
+    feature_lines = stroke_lines.get("feature_lines", [])
 
-    print(f"📄 Loaded {len(sample_points)} strokes as sampled points, and {len(feature_lines)} feature lines")
-    return sample_points, feature_lines
+    print(
+        f"📄 Loaded {len(perturbed_feature_lines)} perturbed feature lines, "
+        f"{len(perturbed_construction_lines)} perturbed construction lines, "
+        f"and {len(feature_lines)} feature lines"
+    )
 
+    return perturbed_feature_lines, perturbed_construction_lines, feature_lines
 
 
 

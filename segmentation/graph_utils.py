@@ -2,6 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # Required for 3D plotting
 
+import random
+
+# stroke types:
+# 1)Straight Line: Point_1 (3 value), Point_2 (3 value), 0, 0, 0, 1
+# 2)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
+# 3)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
+# 4)Arc: Start S (3 values), End E (3 values), Center C (3 values), 4
+# 5)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
+# 6)Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
+
 
 def vis_stroke_node_features(stroke_node_features):
     # Initialize the 3D plot
@@ -257,3 +267,213 @@ def vis_stroke_node_features(stroke_node_features):
 
     # Show plot
     plt.show()
+
+
+
+def compute_global_threshold(feature_lines):
+    """
+    Compute global_threshold from a list of strokes (feature_lines).
+
+    Format (straight line only):
+      [x1, y1, z1, x2, y2, z2, 0, 0, 0, 1]
+
+    Returns:
+      float: avg(straight_line_lengths) * 0.1
+             Returns 0.0 if no straight lines are found.
+    """
+    lengths = []
+
+    for stroke in feature_lines:
+        # minimal shape & straight-line flag
+        if not stroke or len(stroke) < 10:
+            continue
+        flag = stroke[-1]
+        if isinstance(flag, (int, float)) and abs(flag - 1) < 1e-9:
+            x1, y1, z1, x2, y2, z2 = stroke[0], stroke[1], stroke[2], stroke[3], stroke[4], stroke[5]
+            dx = x2 - x1
+            dy = y2 - y1
+            dz = z2 - z1
+            length = (dx * dx + dy * dy + dz * dz) ** 0.5
+            if length > 0:
+                lengths.append(length)
+
+    if not lengths:
+        return 0.0  # no straight lines found
+
+    avg_len = sum(lengths) / len(lengths)
+    return avg_len * 0.08
+
+
+
+
+def vis_perturbed_strokes(
+    perturbed_feature_lines,
+    perturbed_construction_lines,
+    *,
+    color="black",
+    linewidth=0.8,
+    show=True,
+    ax=None,
+    elev=100,
+    azim=45,
+    deterministic_alpha=False,
+    return_bounds=False,
+):
+    """
+    Visualize perturbed strokes with equal scaling across x/y/z.
+
+    Parameters
+    ----------
+    perturbed_feature_lines : polyline | line_group | nested list
+        - polyline: [[x,y,z], [x,y,z], ...]
+        - line_group: [polyline, polyline, ...] (nesting allowed)
+    perturbed_construction_lines : same as above
+    color : str
+        Line color for all strokes.
+    linewidth : float
+        Base width for feature lines. Construction lines are thinner.
+    show : bool
+        If True, calls plt.show() (only if we created the axes here).
+    ax : mpl_toolkits.mplot3d axes or None
+        Provide to draw on an existing 3D axes (e.g., for multi-view screenshots).
+    elev, azim : float
+        Camera angles for view_init.
+    deterministic_alpha : bool
+        If True, uses fixed alphas (features=1.0, constructions=0.35).
+    return_bounds : bool
+        If True, returns (fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)).
+        Otherwise returns (fig, ax) for backward compatibility.
+    """
+
+    # ---------- helpers ----------
+    def is_number(v):
+        return isinstance(v, (int, float))
+
+    def is_point(p):
+        return (
+            isinstance(p, (list, tuple))
+            and len(p) == 3
+            and all(is_number(v) for v in p)
+        )
+
+    def is_polyline(obj):
+        # A non-empty sequence of points
+        return (
+            isinstance(obj, (list, tuple))
+            and len(obj) > 0
+            and all(is_point(p) for p in obj)
+        )
+
+    def flatten_polylines(obj):
+        """
+        Recursively collect all polylines from:
+        - a single polyline
+        - a line group: list/tuple of polylines or nested groups
+        - arbitrarily nested structures mixing the above
+        """
+        out = []
+        if obj is None:
+            return out
+        if is_polyline(obj):
+            out.append(obj)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                out.extend(flatten_polylines(item))
+        else:
+            # ignore scalars/unknowns silently here; validation happens later
+            pass
+        return out
+
+    feat_lines = flatten_polylines(perturbed_feature_lines)
+    cons_lines = flatten_polylines(perturbed_construction_lines)
+
+    # Validate that inputs were structurally OK (i.e., contained at least one polyline)
+    if not feat_lines and not cons_lines:
+        raise ValueError(
+            "No valid polylines found. Provide a polyline [[x,y,z], ...] or a line group "
+            "[polyline, polyline, ...] (nesting allowed)."
+        )
+
+    # ---------- bounds ----------
+    x_min = y_min = z_min = float("inf")
+    x_max = y_max = z_max = float("-inf")
+
+    def update_bounds(lines):
+        nonlocal x_min, y_min, z_min, x_max, y_max, z_max
+        for pts in lines:
+            for x, y, z in pts:
+                if x < x_min: x_min = x
+                if y < y_min: y_min = y
+                if z < z_min: z_min = z
+                if x > x_max: x_max = x
+                if y > y_max: y_max = y
+                if z > z_max: z_max = z
+
+    update_bounds(feat_lines)
+    update_bounds(cons_lines)
+
+    x_center = (x_min + x_max) / 2.0
+    y_center = (y_min + y_max) / 2.0
+    z_center = (z_min + z_max) / 2.0
+
+    max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+    if max_diff == 0:
+        max_diff = 1.0
+    half = max_diff / 2.0
+
+    # ---------- plot ----------
+    created_here = False
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        created_here = True
+        ax.set_axis_off()
+        ax.grid(False)
+    else:
+        fig = ax.get_figure()
+
+    # Feature lines: thicker, alpha 0.9–1.0 (or fixed)
+    feat_alpha = 1.0 if deterministic_alpha else None
+    for pts in feat_lines:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        zs = [p[2] for p in pts]
+        ax.plot(
+            xs, ys, zs,
+            color=color,
+            linewidth=linewidth,
+            alpha=(feat_alpha if feat_alpha is not None else random.uniform(0.9, 1.0))
+        )
+
+    # Construction lines: thinner, alpha 0.2–0.5 (or fixed)
+    cons_width = max(0.1, 0.6 * linewidth)
+    cons_alpha = 0.35 if deterministic_alpha else None
+    for pts in cons_lines:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        zs = [p[2] for p in pts]
+        ax.plot(
+            xs, ys, zs,
+            color=color,
+            linewidth=cons_width,
+            alpha=(cons_alpha if cons_alpha is not None else random.uniform(0.2, 0.5))
+        )
+
+    # Equalize axes
+    ax.set_xlim([x_center - half, x_center + half])
+    ax.set_ylim([y_center - half, y_center + half])
+    ax.set_zlim([z_center - half, z_center + half])
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    ax.view_init(elev=elev, azim=azim)
+
+    if show and created_here:
+        plt.show()
+
+    if return_bounds:
+        return fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)
+    return fig, ax
+

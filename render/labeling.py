@@ -242,14 +242,14 @@ def op_to_stroke(step_path, is_overview = False):
 
 
     #3)Get the construction lines
-    projection_line = line_utils.projection_lines(feature_lines)
-    projection_line += line_utils.derive_construction_lines_for_splines_and_spheres(feature_lines)
+    construction_lines = line_utils.projection_lines(feature_lines)
+    construction_lines += line_utils.derive_construction_lines_for_splines_and_spheres(feature_lines)
     if is_overview:
-        projection_line += line_utils.bounding_box_lines(feature_lines)
+        construction_lines += line_utils.bounding_box_lines(feature_lines)
 
 
     perturbed_feature_lines = perturb_strokes.do_perturb(feature_lines)
-    perturbed_construction_lines = perturb_strokes.do_perturb(projection_line)
+    perturbed_construction_lines = perturb_strokes.do_perturb(construction_lines)
 
     # for idx, _ in enumerate(ops):
     #     perturb_strokes.vis_Op_to_strokes(perturbed_feature_lines, perturbed_construction_lines, cut_off, idx, ops)
@@ -482,10 +482,15 @@ def save_overview_info(
             shutil.copy2(src, save_dir / fname)
 
     # Copy the feature lines
-    with open(save_dir / "perturbed_lines.json", "w", encoding="utf-8") as f:
-        json.dump(perturbed_feature_lines + perturbed_construction_lines, f, indent=2)
-    with open(save_dir / "feature_lines.json", "w", encoding="utf-8") as f:
-        json.dump(feature_lines, f, indent=2)
+    stroke_lines = {
+        "perturbed_feature_lines": perturbed_feature_lines,
+        "perturbed_construction_lines": perturbed_construction_lines,
+        "feature_lines": feature_lines,
+    }
+
+    # Save everything in one JSON file
+    with open(save_dir / "stroke_lines.json", "w", encoding="utf-8") as f:
+        json.dump(stroke_lines, f, indent=2)
 
     return manifest
 
