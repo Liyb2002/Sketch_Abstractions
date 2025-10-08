@@ -13,6 +13,484 @@ import random
 # 6)Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
 
 
+
+def intersection_pairs(sample_points, feature_lines, global_thresh):
+    """
+    Return all (i, j) stroke index pairs (i < j) whose sampled points come within
+    'global_thresh' Euclidean distance of each other.
+
+    sample_points[i] can be:
+      - [ (x,y,z), (x,y,z), ... ]                          # flat list of points
+      - [ [(x,y,z),...], [(x,y,z),...], ... ]              # list of polylines, each a list of points
+
+    feature_lines is accepted for interface consistency (unused here).
+    """
+    n = len(sample_points)
+    thr = float(global_thresh)
+    thr2 = thr * thr
+
+    # Helper: flatten one stroke's points, regardless of nesting (1 level max)
+    def _flatten(pts):
+        flat = []
+        if not pts:
+            return flat
+        first = pts[0] if isinstance(pts, (list, tuple)) and pts else None
+
+        # Case A: flat list of points
+        if isinstance(first, (list, tuple)) and len(first) == 3:
+            for p in pts:
+                if isinstance(p, (list, tuple)) and len(p) == 3:
+                    flat.append((float(p[0]), float(p[1]), float(p[2])))
+            return flat
+
+        # Case B: list of polylines (each a list of points)
+        for seg in pts:
+            if not seg:
+                continue
+            if isinstance(seg, (list, tuple)) and isinstance(seg[0], (list, tuple)) and len(seg[0]) == 3:
+                for p in seg:
+                    if isinstance(p, (list, tuple)) and len(p) == 3:
+                        flat.append((float(p[0]), float(p[1]), float(p[2])))
+        return flat
+
+    # Pre-flatten points per stroke and build padded AABBs for quick pruning
+    flat_pts = []
+    bboxes = []  # (xmin, ymin, zmin, xmax, ymax, zmax) padded by thr
+    for pts in sample_points:
+        fp = _flatten(pts)
+        flat_pts.append(fp)
+        if not fp:
+            bboxes.append((0.0, 0.0, 0.0, -1.0, -1.0, -1.0))  # empty bbox
+            continue
+        x0 = y0 = z0 = float('inf')
+        x1 = y1 = z1 = float('-inf')
+        for (x, y, z) in fp:
+            if x < x0: x0 = x
+            if y < y0: y0 = y
+            if z < z0: z0 = z
+            if x > x1: x1 = x
+            if y > y1: y1 = y
+            if z > z1: z1 = z
+        bboxes.append((x0 - thr, y0 - thr, z0 - thr, x1 + thr, y1 + thr, z1 + thr))
+
+    def _boxes_overlap(a, b):
+        # Axis-aligned overlap
+        return not (
+            a[3] < b[0] or b[3] < a[0] or  # x
+            a[4] < b[1] or b[4] < a[1] or  # y
+            a[5] < b[2] or b[5] < a[2]     # z
+        )
+
+    pairs = []
+    for i in range(n):
+        pi = flat_pts[i]
+        if not pi:
+            continue
+        bi = bboxes[i]
+        for j in range(i + 1, n):
+            pj = flat_pts[j]
+            if not pj:
+                continue
+            if not _boxes_overlap(bi, bboxes[j]):
+                continue
+
+            # Brute force with early exit
+            found = False
+            for (x1, y1, z1) in pi:
+                # Slight micro-optimization: hoist
+                for (x2, y2, z2) in pj:
+                    dx = x1 - x2
+                    dy = y1 - y2
+                    dz = z1 - z2
+                    if dx*dx + dy*dy + dz*dz <= thr2:
+                        found = True
+                        break
+                if found:
+                    break
+
+            if found:
+                pairs.append((i, j))
+
+    return pairs
+
+
+
+
+
+def perpendicular_pairs(feature_lines, global_thresh):
+    """
+    Detect perpendicular relationships per your simplified rules:
+
+    1) line-line : angle in [85°, 95°]  (|dot| <= cos 85°)
+    2) line-circle : min endpoint distance to circle center is ~ on the circle:
+         abs(dist(P_end, C_circle) - R_circle) < global_thresh
+    3) line-sphere : same as line-circle but with sphere center/radius
+    4) circle-cylinder : centers coincide within global_thresh, OR
+         |C_circle - (C_cyl + H*n)| <= global_thresh, OR
+         |C_circle - (C_cyl - H*n)| <= global_thresh
+       (n is the normalized cylinder normal)
+
+    Returns:
+      List[Tuple[int, int]] with i<j
+    """
+
+    # ----------------- tiny vector helpers -----------------
+    def _dot(ax, ay, az, bx, by, bz):
+        return ax*bx + ay*by + az*bz
+
+    def _norm(ax, ay, az):
+        return (ax*ax + ay*ay + az*az) ** 0.5
+
+    def _sub(ax, ay, az, bx, by, bz):
+        return (ax - bx, ay - by, az - bz)
+
+    def _dist(ax, ay, az, bx, by, bz):
+        dx, dy, dz = ax - bx, ay - by, az - bz
+        return (dx*dx + dy*dy + dz*dz) ** 0.5
+
+    def _unit(ax, ay, az):
+        n = _norm(ax, ay, az)
+        if n == 0.0:
+            return None
+        return (ax/n, ay/n, az/n)
+
+    # ----------------- parsers by type -----------------
+    def _type_code(stroke):
+        return int(round(float(stroke[-1])))
+
+    def _is_line(s):     return _type_code(s) == 1
+    def _is_circle(s):   return _type_code(s) == 2
+    def _is_cylinder(s): return _type_code(s) == 3
+    def _is_sphere(s):   return _type_code(s) == 6
+
+    def _line_endpoints(s):
+        # [x1,y1,z1, x2,y2,z2, 0,0,0, 1]
+        return (float(s[0]), float(s[1]), float(s[2])), (float(s[3]), float(s[4]), float(s[5]))
+
+    def _line_dir(s):
+        (x1,y1,z1), (x2,y2,z2) = _line_endpoints(s)
+        u = _unit(x2-x1, y2-y1, z2-z1)
+        return u  # None if degenerate
+
+    def _circle_center_normal_radius(s):
+        # [cx,cy,cz, nx,ny,nz, 0, radius, 0, 2]
+        cx, cy, cz = float(s[0]), float(s[1]), float(s[2])
+        nx, ny, nz = float(s[3]), float(s[4]), float(s[5])
+        r = float(s[7])
+        return (cx, cy, cz), (nx, ny, nz), r
+
+    def _cylinder_center_normal_height_radius(s):
+        # [cx,cy,cz, nx,ny,nz, height, radius, 0, 3]
+        cx, cy, cz = float(s[0]), float(s[1]), float(s[2])
+        nx, ny, nz = float(s[3]), float(s[4]), float(s[5])
+        h = float(s[6])
+        r = float(s[7])
+        return (cx, cy, cz), (nx, ny, nz), h, r
+
+    def _sphere_center_radius(s):
+        # [cx,cy,cz, ax,ay,az, 0, radius, 0, 6]
+        cx, cy, cz = float(s[0]), float(s[1]), float(s[2])
+        r = float(s[7])
+        return (cx, cy, cz), r
+
+    # ----------------- rule checks -----------------
+    PERP_DOT_MAX = 0.0873  # ~= cos(85°)
+
+    def _line_line_perp(s1, s2):
+        d1 = _line_dir(s1)
+        d2 = _line_dir(s2)
+        if (d1 is None) or (d2 is None):
+            return False
+        dot = abs(_dot(d1[0], d1[1], d1[2], d2[0], d2[1], d2[2]))
+        return dot <= PERP_DOT_MAX
+
+    def _line_circle_perp(line_s, circ_s):
+        (x1,y1,z1), (x2,y2,z2) = _line_endpoints(line_s)
+        (ccx, ccy, ccz), _n, r = _circle_center_normal_radius(circ_s)
+        # use absolute difference to test "near circumference"
+        d1 = abs(_dist(x1,y1,z1, ccx,ccy,ccz) - r)
+        d2 = abs(_dist(x2,y2,z2, ccx,ccy,ccz) - r)
+        return (d1 < global_thresh) or (d2 < global_thresh)
+
+    def _line_sphere_perp(line_s, sph_s):
+        (x1,y1,z1), (x2,y2,z2) = _line_endpoints(line_s)
+        (scx, scy, scz), r = _sphere_center_radius(sph_s)
+        d1 = abs(_dist(x1,y1,z1, scx,scy,scz) - r)
+        d2 = abs(_dist(x2,y2,z2, scx,scy,scz) - r)
+        return (d1 < global_thresh) or (d2 < global_thresh)
+
+    def _circle_cylinder_perp(circ_s, cyl_s):
+        (ccx, ccy, ccz), _cn, _cr = _circle_center_normal_radius(circ_s)
+        (ycx, ycy, ycz), yn, h, _yr = _cylinder_center_normal_height_radius(cyl_s)
+        n = _unit(yn[0], yn[1], yn[2])
+        if n is None:
+            return False
+        # centers equal
+        if _dist(ccx,ccy,ccz, ycx,ycy,ycz) <= global_thresh:
+            return True
+        # center = cyl_center ± h * n
+        offx, offy, offz = h*n[0], h*n[1], h*n[2]
+        upx, upy, upz = ycx + offx, ycy + offy, ycz + offz
+        dwnx, dwny, dwnz = ycx - offx, ycy - offy, ycz - offz
+        if _dist(ccx,ccy,ccz, upx,upy,upz) <= global_thresh:
+            return True
+        if _dist(ccx,ccy,ccz, dwnx,dwny,dwnz) <= global_thresh:
+            return True
+        return False
+
+    # ----------------- main loop over relevant type pairs only -----------------
+    n = len(feature_lines)
+    pairs = []
+    for i in range(n):
+        si = feature_lines[i]
+        ti = _type_code(si)
+        if ti not in (1, 2, 3, 6):
+            continue  # skip arc(4)/spline(5)/others by your spec
+        for j in range(i+1, n):
+            sj = feature_lines[j]
+            tj = _type_code(sj)
+            if tj not in (1, 2, 3, 6):
+                continue
+
+            ok = False
+            # line-line
+            if ti == 1 and tj == 1:
+                ok = _line_line_perp(si, sj)
+
+            # line-circle
+            elif (ti == 1 and tj == 2):
+                ok = _line_circle_perp(si, sj)
+            elif (ti == 2 and tj == 1):
+                ok = _line_circle_perp(sj, si)
+
+            # line-sphere
+            elif (ti == 1 and tj == 6):
+                ok = _line_sphere_perp(si, sj)
+            elif (ti == 6 and tj == 1):
+                ok = _line_sphere_perp(sj, si)
+
+            # circle - cylinder face
+            elif (ti == 2 and tj == 3):
+                ok = _circle_cylinder_perp(si, sj)
+            elif (ti == 3 and tj == 2):
+                ok = _circle_cylinder_perp(sj, si)
+
+            if ok:
+                pairs.append((i, j))
+
+    return pairs
+
+
+
+def compute_global_threshold(feature_lines):
+    """
+    Compute global_threshold from a list of strokes (feature_lines).
+
+    Format (straight line only):
+      [x1, y1, z1, x2, y2, z2, 0, 0, 0, 1]
+
+    Returns:
+      float: avg(straight_line_lengths) * 0.1
+             Returns 0.0 if no straight lines are found.
+    """
+    lengths = []
+
+    for stroke in feature_lines:
+        # minimal shape & straight-line flag
+        if not stroke or len(stroke) < 10:
+            continue
+        flag = stroke[-1]
+        if isinstance(flag, (int, float)) and abs(flag - 1) < 1e-9:
+            x1, y1, z1, x2, y2, z2 = stroke[0], stroke[1], stroke[2], stroke[3], stroke[4], stroke[5]
+            dx = x2 - x1
+            dy = y2 - y1
+            dz = z2 - z1
+            length = (dx * dx + dy * dy + dz * dz) ** 0.5
+            if length > 0:
+                lengths.append(length)
+
+    if not lengths:
+        return 0.0  # no straight lines found
+
+    avg_len = sum(lengths) / len(lengths)
+    return avg_len * 0.08
+
+
+
+
+def vis_perturbed_strokes(
+    perturbed_feature_lines,
+    perturbed_construction_lines,
+    *,
+    color="black",
+    linewidth=0.8,
+    show=True,
+    ax=None,
+    elev=100,
+    azim=45,
+    deterministic_alpha=False,
+    return_bounds=False,
+):
+    """
+    Visualize perturbed strokes with equal scaling across x/y/z.
+
+    Parameters
+    ----------
+    perturbed_feature_lines : polyline | line_group | nested list
+        - polyline: [[x,y,z], [x,y,z], ...]
+        - line_group: [polyline, polyline, ...] (nesting allowed)
+    perturbed_construction_lines : same as above
+    color : str
+        Line color for all strokes.
+    linewidth : float
+        Base width for feature lines. Construction lines are thinner.
+    show : bool
+        If True, calls plt.show() (only if we created the axes here).
+    ax : mpl_toolkits.mplot3d axes or None
+        Provide to draw on an existing 3D axes (e.g., for multi-view screenshots).
+    elev, azim : float
+        Camera angles for view_init.
+    deterministic_alpha : bool
+        If True, uses fixed alphas (features=1.0, constructions=0.35).
+    return_bounds : bool
+        If True, returns (fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)).
+        Otherwise returns (fig, ax) for backward compatibility.
+    """
+
+    # ---------- helpers ----------
+    def is_number(v):
+        return isinstance(v, (int, float))
+
+    def is_point(p):
+        return (
+            isinstance(p, (list, tuple))
+            and len(p) == 3
+            and all(is_number(v) for v in p)
+        )
+
+    def is_polyline(obj):
+        # A non-empty sequence of points
+        return (
+            isinstance(obj, (list, tuple))
+            and len(obj) > 0
+            and all(is_point(p) for p in obj)
+        )
+
+    def flatten_polylines(obj):
+        """
+        Recursively collect all polylines from:
+        - a single polyline
+        - a line group: list/tuple of polylines or nested groups
+        - arbitrarily nested structures mixing the above
+        """
+        out = []
+        if obj is None:
+            return out
+        if is_polyline(obj):
+            out.append(obj)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                out.extend(flatten_polylines(item))
+        else:
+            # ignore scalars/unknowns silently here; validation happens later
+            pass
+        return out
+
+    feat_lines = flatten_polylines(perturbed_feature_lines)
+    cons_lines = flatten_polylines(perturbed_construction_lines)
+
+    # Validate that inputs were structurally OK (i.e., contained at least one polyline)
+    if not feat_lines and not cons_lines:
+        raise ValueError(
+            "No valid polylines found. Provide a polyline [[x,y,z], ...] or a line group "
+            "[polyline, polyline, ...] (nesting allowed)."
+        )
+
+    # ---------- bounds ----------
+    x_min = y_min = z_min = float("inf")
+    x_max = y_max = z_max = float("-inf")
+
+    def update_bounds(lines):
+        nonlocal x_min, y_min, z_min, x_max, y_max, z_max
+        for pts in lines:
+            for x, y, z in pts:
+                if x < x_min: x_min = x
+                if y < y_min: y_min = y
+                if z < z_min: z_min = z
+                if x > x_max: x_max = x
+                if y > y_max: y_max = y
+                if z > z_max: z_max = z
+
+    update_bounds(feat_lines)
+    update_bounds(cons_lines)
+
+    x_center = (x_min + x_max) / 2.0
+    y_center = (y_min + y_max) / 2.0
+    z_center = (z_min + z_max) / 2.0
+
+    max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
+    if max_diff == 0:
+        max_diff = 1.0
+    half = max_diff / 2.0
+
+    # ---------- plot ----------
+    created_here = False
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        created_here = True
+        ax.set_axis_off()
+        ax.grid(False)
+    else:
+        fig = ax.get_figure()
+
+    # Feature lines: thicker, alpha 0.9–1.0 (or fixed)
+    feat_alpha = 1.0 if deterministic_alpha else None
+    for pts in feat_lines:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        zs = [p[2] for p in pts]
+        ax.plot(
+            xs, ys, zs,
+            color=color,
+            linewidth=linewidth,
+            alpha=(feat_alpha if feat_alpha is not None else random.uniform(0.9, 1.0))
+        )
+
+    # Construction lines: thinner, alpha 0.2–0.5 (or fixed)
+    cons_width = max(0.1, 0.6 * linewidth)
+    cons_alpha = 0.35 if deterministic_alpha else None
+    for pts in cons_lines:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        zs = [p[2] for p in pts]
+        ax.plot(
+            xs, ys, zs,
+            color=color,
+            linewidth=cons_width,
+            alpha=(cons_alpha if cons_alpha is not None else random.uniform(0.2, 0.5))
+        )
+
+    # Equalize axes
+    ax.set_xlim([x_center - half, x_center + half])
+    ax.set_ylim([y_center - half, y_center + half])
+    ax.set_zlim([z_center - half, z_center + half])
+    try:
+        ax.set_box_aspect((1, 1, 1))
+    except Exception:
+        pass
+
+    ax.view_init(elev=elev, azim=azim)
+
+    if show and created_here:
+        plt.show()
+
+    if return_bounds:
+        return fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)
+    return fig, ax
+
+
+
 def vis_stroke_node_features(stroke_node_features):
     # Initialize the 3D plot
 
@@ -267,213 +745,3 @@ def vis_stroke_node_features(stroke_node_features):
 
     # Show plot
     plt.show()
-
-
-
-def compute_global_threshold(feature_lines):
-    """
-    Compute global_threshold from a list of strokes (feature_lines).
-
-    Format (straight line only):
-      [x1, y1, z1, x2, y2, z2, 0, 0, 0, 1]
-
-    Returns:
-      float: avg(straight_line_lengths) * 0.1
-             Returns 0.0 if no straight lines are found.
-    """
-    lengths = []
-
-    for stroke in feature_lines:
-        # minimal shape & straight-line flag
-        if not stroke or len(stroke) < 10:
-            continue
-        flag = stroke[-1]
-        if isinstance(flag, (int, float)) and abs(flag - 1) < 1e-9:
-            x1, y1, z1, x2, y2, z2 = stroke[0], stroke[1], stroke[2], stroke[3], stroke[4], stroke[5]
-            dx = x2 - x1
-            dy = y2 - y1
-            dz = z2 - z1
-            length = (dx * dx + dy * dy + dz * dz) ** 0.5
-            if length > 0:
-                lengths.append(length)
-
-    if not lengths:
-        return 0.0  # no straight lines found
-
-    avg_len = sum(lengths) / len(lengths)
-    return avg_len * 0.08
-
-
-
-
-def vis_perturbed_strokes(
-    perturbed_feature_lines,
-    perturbed_construction_lines,
-    *,
-    color="black",
-    linewidth=0.8,
-    show=True,
-    ax=None,
-    elev=100,
-    azim=45,
-    deterministic_alpha=False,
-    return_bounds=False,
-):
-    """
-    Visualize perturbed strokes with equal scaling across x/y/z.
-
-    Parameters
-    ----------
-    perturbed_feature_lines : polyline | line_group | nested list
-        - polyline: [[x,y,z], [x,y,z], ...]
-        - line_group: [polyline, polyline, ...] (nesting allowed)
-    perturbed_construction_lines : same as above
-    color : str
-        Line color for all strokes.
-    linewidth : float
-        Base width for feature lines. Construction lines are thinner.
-    show : bool
-        If True, calls plt.show() (only if we created the axes here).
-    ax : mpl_toolkits.mplot3d axes or None
-        Provide to draw on an existing 3D axes (e.g., for multi-view screenshots).
-    elev, azim : float
-        Camera angles for view_init.
-    deterministic_alpha : bool
-        If True, uses fixed alphas (features=1.0, constructions=0.35).
-    return_bounds : bool
-        If True, returns (fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)).
-        Otherwise returns (fig, ax) for backward compatibility.
-    """
-
-    # ---------- helpers ----------
-    def is_number(v):
-        return isinstance(v, (int, float))
-
-    def is_point(p):
-        return (
-            isinstance(p, (list, tuple))
-            and len(p) == 3
-            and all(is_number(v) for v in p)
-        )
-
-    def is_polyline(obj):
-        # A non-empty sequence of points
-        return (
-            isinstance(obj, (list, tuple))
-            and len(obj) > 0
-            and all(is_point(p) for p in obj)
-        )
-
-    def flatten_polylines(obj):
-        """
-        Recursively collect all polylines from:
-        - a single polyline
-        - a line group: list/tuple of polylines or nested groups
-        - arbitrarily nested structures mixing the above
-        """
-        out = []
-        if obj is None:
-            return out
-        if is_polyline(obj):
-            out.append(obj)
-        elif isinstance(obj, (list, tuple)):
-            for item in obj:
-                out.extend(flatten_polylines(item))
-        else:
-            # ignore scalars/unknowns silently here; validation happens later
-            pass
-        return out
-
-    feat_lines = flatten_polylines(perturbed_feature_lines)
-    cons_lines = flatten_polylines(perturbed_construction_lines)
-
-    # Validate that inputs were structurally OK (i.e., contained at least one polyline)
-    if not feat_lines and not cons_lines:
-        raise ValueError(
-            "No valid polylines found. Provide a polyline [[x,y,z], ...] or a line group "
-            "[polyline, polyline, ...] (nesting allowed)."
-        )
-
-    # ---------- bounds ----------
-    x_min = y_min = z_min = float("inf")
-    x_max = y_max = z_max = float("-inf")
-
-    def update_bounds(lines):
-        nonlocal x_min, y_min, z_min, x_max, y_max, z_max
-        for pts in lines:
-            for x, y, z in pts:
-                if x < x_min: x_min = x
-                if y < y_min: y_min = y
-                if z < z_min: z_min = z
-                if x > x_max: x_max = x
-                if y > y_max: y_max = y
-                if z > z_max: z_max = z
-
-    update_bounds(feat_lines)
-    update_bounds(cons_lines)
-
-    x_center = (x_min + x_max) / 2.0
-    y_center = (y_min + y_max) / 2.0
-    z_center = (z_min + z_max) / 2.0
-
-    max_diff = max(x_max - x_min, y_max - y_min, z_max - z_min)
-    if max_diff == 0:
-        max_diff = 1.0
-    half = max_diff / 2.0
-
-    # ---------- plot ----------
-    created_here = False
-    if ax is None:
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
-        created_here = True
-        ax.set_axis_off()
-        ax.grid(False)
-    else:
-        fig = ax.get_figure()
-
-    # Feature lines: thicker, alpha 0.9–1.0 (or fixed)
-    feat_alpha = 1.0 if deterministic_alpha else None
-    for pts in feat_lines:
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        zs = [p[2] for p in pts]
-        ax.plot(
-            xs, ys, zs,
-            color=color,
-            linewidth=linewidth,
-            alpha=(feat_alpha if feat_alpha is not None else random.uniform(0.9, 1.0))
-        )
-
-    # Construction lines: thinner, alpha 0.2–0.5 (or fixed)
-    cons_width = max(0.1, 0.6 * linewidth)
-    cons_alpha = 0.35 if deterministic_alpha else None
-    for pts in cons_lines:
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        zs = [p[2] for p in pts]
-        ax.plot(
-            xs, ys, zs,
-            color=color,
-            linewidth=cons_width,
-            alpha=(cons_alpha if cons_alpha is not None else random.uniform(0.2, 0.5))
-        )
-
-    # Equalize axes
-    ax.set_xlim([x_center - half, x_center + half])
-    ax.set_ylim([y_center - half, y_center + half])
-    ax.set_zlim([z_center - half, z_center + half])
-    try:
-        ax.set_box_aspect((1, 1, 1))
-    except Exception:
-        pass
-
-    ax.view_init(elev=elev, azim=azim)
-
-    if show and created_here:
-        plt.show()
-
-    if return_bounds:
-        return fig, ax, (x_min, x_max, y_min, y_max, z_min, z_max)
-    return fig, ax
-

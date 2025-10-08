@@ -28,18 +28,21 @@ def run_once():
 
     # 2) Load strokes
     perturbed_feature_lines, perturbed_construction_lines, feature_lines = load_perturbed_feature_lines(input_dir)
+    sampled_points = perturbed_feature_lines + perturbed_construction_lines
 
-
-    # 3) Prepare information
+    # 3) Prepare geometric information
     global_thresh = graph_utils.compute_global_threshold(feature_lines)
-    print("global_thresh", global_thresh)
+
+    intersect_pairs = graph_utils.intersection_pairs(sampled_points, feature_lines, global_thresh)
+
+    perp_pairs = graph_utils.perpendicular_pairs(feature_lines, global_thresh)
+    print("perp_pairs", perp_pairs)
 
 
 
-
-    plot_program_only(exe_old, use_offsets=False, use_scales=False)
+    # plot_program_only(exe_old, use_offsets=False, use_scales=False)
     # graph_utils.vis_stroke_node_features(feature_lines)
-    graph_utils.vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines)
+    # graph_utils.vis_perturbed_strokes(perturbed_feature_lines, perturbed_construction_lines)
 
 
 
