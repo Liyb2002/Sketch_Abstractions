@@ -36,7 +36,11 @@ def run_once():
     intersect_pairs = graph_utils.intersection_pairs(sampled_points, feature_lines, global_thresh)
 
     perp_pairs = graph_utils.perpendicular_pairs(feature_lines, global_thresh)
-    print("perp_pairs", perp_pairs)
+
+    loops = graph_utils.find_planar_loops(feature_lines, global_thresh, angle_tol_deg=5.0)
+    print('loops', loops)
+
+    # 4) Initialize per stroke labels
 
 
 

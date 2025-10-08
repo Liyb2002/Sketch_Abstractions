@@ -281,6 +281,310 @@ def perpendicular_pairs(feature_lines, global_thresh):
     return pairs
 
 
+def find_planar_loops(feature_lines, global_thresh, angle_tol_deg=5.0):
+    """
+    Find planar loops of size 3 or 4 using only straight lines (type 1).
+
+    A valid loop:
+      - uses 3 or 4 straight-line strokes,
+      - the 2*E endpoints cluster into exactly E vertices (E=3 or 4),
+      - every vertex appears exactly twice (degree-2),
+      - all endpoints lie on one plane within global_thresh,
+      - every edge direction lies in that plane within ±angle_tol_deg.
+
+    Returns:
+      loops: List[List[int]]  # each is a list of 3 or 4 stroke ids
+    """
+    thr = float(global_thresh)
+    thr2 = thr * thr
+
+    # ------------- tiny vector helpers -------------
+    def _dot(ax, ay, az, bx, by, bz):
+        return ax*bx + ay*by + az*bz
+
+    def _sub(a, b):
+        return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
+
+    def _add(a, b):
+        return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
+
+    def _norm(ax, ay, az):
+        return (ax*ax + ay*ay + az*az) ** 0.5
+
+    def _unit(v):
+        n = _norm(v[0], v[1], v[2])
+        if n == 0.0:
+            return None
+        return (v[0]/n, v[1]/n, v[2]/n)
+
+    def _cross(a, b):
+        return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+
+    def _dist2(a, b):
+        dx, dy, dz = a[0]-b[0], a[1]-b[1], a[2]-b[2]
+        return dx*dx + dy*dy + dz*dz
+
+    # angle tolerance: line direction must be within 90°±tol of plane normal
+    # i.e., |dot(dir, n)| <= sin(tol)
+    # For 5°, sin ≈ 0.08716; we’ll compute a small-angle approx for flexibility.
+    PI = 3.141592653589793
+    rad = angle_tol_deg * PI / 180.0
+    sin_tol = rad - (rad*rad*rad)/6.0  # good for small angles (<=10°)
+    if sin_tol < 0:  # just in case
+        sin_tol = 0.0872
+
+    # ------------- collect straight lines -------------
+    # For each straight line stroke: endpoints, direction, length
+    straight_ids = []
+    endpoints_by_stroke = {}  # s -> (p1, p2)
+    dir_by_stroke = {}        # s -> unit direction
+    for s, stroke in enumerate(feature_lines):
+        if not stroke or len(stroke) < 10:
+            continue
+        t = int(round(float(stroke[-1])))
+        if t != 1:
+            continue  # only straight lines
+        x1, y1, z1 = float(stroke[0]), float(stroke[1]), float(stroke[2])
+        x2, y2, z2 = float(stroke[3]), float(stroke[4]), float(stroke[5])
+        p1 = (x1, y1, z1)
+        p2 = (x2, y2, z2)
+        d = _unit((x2-x1, y2-y1, z2-z1))
+        if d is None:
+            continue  # degenerate
+        straight_ids.append(s)
+        endpoints_by_stroke[s] = (p1, p2)
+        dir_by_stroke[s] = d
+
+    if not straight_ids:
+        return []
+
+    # ------------- make vertex registry by clustering endpoints -------------
+    # Assign each endpoint to a vertex id if within 'thr' of an existing one.
+    vertices = []  # list of 3D points (representatives)
+    def _vid_for_point(p):
+        # linear scan (ok for typical sizes); merges within thr
+        for vid, q in enumerate(vertices):
+            if _dist2(p, q) <= thr2:
+                return vid
+        vertices.append(p)
+        return len(vertices) - 1
+
+    # For each straight stroke, map to vertex ids
+    edge_of_stroke = {}  # s -> (v1, v2)
+    for s in straight_ids:
+        p1, p2 = endpoints_by_stroke[s]
+        v1 = _vid_for_point(p1)
+        v2 = _vid_for_point(p2)
+        if v1 == v2:
+            continue  # skip zero-length after clustering
+        edge_of_stroke[s] = (v1, v2)
+
+    # ------------- build vertex graph (adjacency) and edge map -------------
+    adj = {}  # vid -> set(neighbor vids)
+    edge_to_stroke = {}  # (min(v1,v2), max(v1,v2)) -> stroke id (choose first)
+    for s, (v1, v2) in edge_of_stroke.items():
+        a, b = (v1, v2) if v1 < v2 else (v2, v1)
+        if a == b:
+            continue
+        # keep the first stroke for this geometric edge
+        if (a, b) not in edge_to_stroke:
+            edge_to_stroke[(a, b)] = s
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+
+    V = len(vertices)
+    for vid in range(V):
+        adj.setdefault(vid, set())
+
+    # ------------- helpers to validate loops -------------
+    def _plane_from_three_points(a, b, c):
+        # returns (n_unit, d) for plane n·x + d = 0, or (None, None) if degenerate
+        ab = _sub(b, a)
+        ac = _sub(c, a)
+        n = _cross(ab, ac)
+        n = _unit(n)
+        if n is None:
+            return None, None
+        d = -_dot(n[0], n[1], n[2], a[0], a[1], a[2])
+        return n, d
+
+    def _point_plane_dist_abs(n, d, p):
+        # |n·p + d|
+        return abs(_dot(n[0], n[1], n[2], p[0], p[1], p[2]) + d)
+
+    def _loop_vertex_counts_ok(stroke_ids):
+        # Gather vertex counts; each must appear exactly twice; #unique == len(strokes)
+        counts = {}
+        for s in stroke_ids:
+            if s not in edge_of_stroke:
+                return False
+            v1, v2 = edge_of_stroke[s]
+            counts[v1] = counts.get(v1, 0) + 1
+            counts[v2] = counts.get(v2, 0) + 1
+        if len(counts) != len(stroke_ids):
+            return False
+        for v, c in counts.items():
+            if c != 2:
+                return False
+        return True
+
+    def _loop_connected(stroke_ids):
+        # Check the subgraph induced by these edges is a single cycle (connected).
+        if not stroke_ids:
+            return False
+        # build local adjacency on loop vertices
+        ladj = {}
+        verts_in = set()
+        for s in stroke_ids:
+            v1, v2 = edge_of_stroke[s]
+            verts_in.add(v1); verts_in.add(v2)
+            ladj.setdefault(v1, set()).add(v2)
+            ladj.setdefault(v2, set()).add(v1)
+        # BFS from an arbitrary vertex
+        start = next(iter(verts_in))
+        stack = [start]
+        seen = set([start])
+        while stack:
+            u = stack.pop()
+            for w in ladj.get(u, ()):
+                if w not in seen:
+                    seen.add(w)
+                    stack.append(w)
+        return seen == verts_in
+
+    def _loop_planar_ok(stroke_ids):
+        # Build a plane from three non-collinear vertices; check endpoints & directions.
+        # Collect unique vertex ids in this loop
+        vids = []
+        for s in stroke_ids:
+            v1, v2 = edge_of_stroke[s]
+            if v1 not in vids: vids.append(v1)
+            if v2 not in vids: vids.append(v2)
+        if len(vids) < 3:
+            return False
+        # find non-collinear triple
+        n = None; d = None
+        found = False
+        L = len(vids)
+        for i in range(L-2):
+            for j in range(i+1, L-1):
+                for k in range(j+1, L):
+                    n_try, d_try = _plane_from_three_points(vertices[vids[i]], vertices[vids[j]], vertices[vids[k]])
+                    if n_try is not None:
+                        n, d = n_try, d_try
+                        found = True
+                        break
+                if found: break
+            if found: break
+        if not found:
+            return False
+        # endpoints close to plane
+        for s in stroke_ids:
+            p1, p2 = endpoints_by_stroke[s]
+            if _point_plane_dist_abs(n, d, p1) > thr:
+                return False
+            if _point_plane_dist_abs(n, d, p2) > thr:
+                return False
+        # directions lie in plane (within ±angle tolerance)
+        for s in stroke_ids:
+            dx, dy, dz = dir_by_stroke[s]
+            if abs(_dot(dx, dy, dz, n[0], n[1], n[2])) > sin_tol:
+                return False
+        return True
+
+    loops = []
+    seen = set()  # frozenset of stroke ids to avoid duplicates
+
+    # --------- TRIANGLES (3-cycles) ----------
+    for a in range(V):
+        na = adj.get(a, set())
+        if not na:
+            continue
+        for b in sorted(na):
+            if b <= a:
+                continue
+            nb = adj.get(b, set())
+            # common neighbors c
+            common = na.intersection(nb)
+            for c in sorted(common):
+                if c <= b or c == a:
+                    continue
+                # edges: (a,b), (b,c), (c,a) must exist
+                e1 = (a, b) if a < b else (b, a)
+                e2 = (b, c) if b < c else (c, b)
+                e3 = (c, a) if c < a else (a, c)
+                if e1 not in edge_to_stroke or e2 not in edge_to_stroke or e3 not in edge_to_stroke:
+                    continue
+                s1 = edge_to_stroke[e1]
+                s2 = edge_to_stroke[e2]
+                s3 = edge_to_stroke[e3]
+                group = [s1, s2, s3]
+                key = frozenset(group)
+                if key in seen:
+                    continue
+                # structural checks
+                if not _loop_vertex_counts_ok(group):
+                    continue
+                if not _loop_connected(group):
+                    continue
+                # planar checks
+                if not _loop_planar_ok(group):
+                    continue
+                loops.append(group)
+                seen.add(key)
+
+    # --------- QUADS (4-cycles) ----------
+    # Enumerate 4-cycles (a,b,c,d) with edges (a,b),(b,c),(c,d),(d,a).
+    for a in range(V):
+        nbrs_a = sorted(adj.get(a, set()))
+        # choose two distinct neighbors b,d of a
+        for bi in range(len(nbrs_a)):
+            b = nbrs_a[bi]
+            if b <= a:
+                continue
+            for di in range(bi+1, len(nbrs_a)):
+                d = nbrs_a[di]
+                if d <= a or d == b:
+                    continue
+                # common neighbors of b and d give candidates for c
+                common = adj.get(b, set()).intersection(adj.get(d, set()))
+                for c in sorted(common):
+                    if c == a or c == b or c == d:
+                        continue
+                    # canonicalization to reduce duplicates:
+                    # require a to be the smallest vertex id in the 4-tuple,
+                    # and b < d to fix orientation
+                    if not (a < b and a < c and a < d and b < d):
+                        continue
+                    # edges present?
+                    e_ab = (a, b) if a < b else (b, a)
+                    e_bc = (b, c) if b < c else (c, b)
+                    e_cd = (c, d) if c < d else (d, c)
+                    e_da = (d, a) if d < a else (a, d)
+                    if e_ab not in edge_to_stroke or e_bc not in edge_to_stroke \
+                       or e_cd not in edge_to_stroke or e_da not in edge_to_stroke:
+                        continue
+                    group = [edge_to_stroke[e_ab],
+                             edge_to_stroke[e_bc],
+                             edge_to_stroke[e_cd],
+                             edge_to_stroke[e_da]]
+                    key = frozenset(group)
+                    if key in seen:
+                        continue
+                    # structural checks
+                    if not _loop_vertex_counts_ok(group):
+                        continue
+                    if not _loop_connected(group):
+                        continue
+                    # planar checks
+                    if not _loop_planar_ok(group):
+                        continue
+                    loops.append(group)
+                    seen.add(key)
+
+    return loops
+
+
 
 def compute_global_threshold(feature_lines):
     """
