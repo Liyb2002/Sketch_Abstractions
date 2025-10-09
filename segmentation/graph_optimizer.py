@@ -55,6 +55,8 @@ def run_once():
     )
 
 
+    # plot_program_only(exe_old, use_offsets=False, use_scales=False)
+    graph_utils.plot_strokes_and_program(perturbed_feature_lines, components)
 
 
     # 6) Visualize initial vs propagated

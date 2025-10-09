@@ -1471,3 +1471,98 @@ def visualize_strokes_by_confidence(sample_points, C, components=None, title="As
 
     plt.tight_layout()
     plt.show()
+
+
+
+def plot_strokes_and_program(sample_points, components, title=None):
+    """
+    Minimal 3D viz: strokes (black) + cuboids (thin blue), no labels/legend/axes.
+    Strokes are drawn first so cuboids appear on top.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # ---- helpers ----
+    def _iter_polylines(pts):
+        if not pts:
+            return
+        first = pts[0] if isinstance(pts, (list, tuple)) and pts else None
+        # flat list of points
+        if isinstance(first, (list, tuple)) and len(first) == 3:
+            arr = np.asarray(pts, dtype=float).reshape(-1, 3)
+            if arr.size:
+                yield arr
+        # list of polylines
+        else:
+            for seg in pts:
+                if not seg:
+                    continue
+                arr = np.asarray(seg, dtype=float).reshape(-1, 3)
+                if arr.size:
+                    yield arr
+
+    def _bounds_from_edges(edges):
+        if not edges:
+            return np.empty((0,3), dtype=float)
+        pts = []
+        for a,b in edges:
+            pts.append(a); pts.append(b)
+        return np.asarray(pts, dtype=float).reshape(-1,3)
+
+    # ---- plot ----
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    if title:
+        ax.set_title(title)
+
+    mins = np.array([np.inf, np.inf, np.inf], dtype=float)
+    maxs = -mins
+
+    # 1) strokes in black (background)
+    stroke_color = (0, 0, 0, 1)
+    for stroke in (sample_points or []):
+        for arr in _iter_polylines(stroke):
+            if arr.shape[0] >= 2:
+                ax.plot(arr[:,0], arr[:,1], arr[:,2], color=stroke_color, linewidth=1.0, alpha=0.9)
+            else:
+                ax.scatter(arr[:,0], arr[:,1], arr[:,2], color=stroke_color, s=6, alpha=0.9)
+            mins = np.minimum(mins, arr.min(axis=0))
+            maxs = np.maximum(maxs, arr.max(axis=0))
+
+    # 2) cuboids as thin blue wireframes (foreground)
+    cube_color = (0.2, 0.4, 1.0, 1.0)
+    for comp in (components or []):
+        try:
+            edges = comp.edges()
+        except Exception:
+            edges = []
+        for a, b in edges:
+            ax.plot([a[0], b[0]], [a[1], b[1]], [a[2], b[2]], color=cube_color, linewidth=0.8, alpha=0.95)
+        E = _bounds_from_edges(edges)
+        if E.size:
+            mins = np.minimum(mins, E.min(axis=0))
+            maxs = np.maximum(maxs, E.max(axis=0))
+
+    # equal aspect
+    if np.all(np.isfinite(mins)) and np.all(np.isfinite(maxs)):
+        spans = maxs - mins
+        r = spans.max() if spans.max() > 0 else 1.0
+        c = (maxs + mins) / 2.0
+        ax.set_xlim(c[0]-r/2, c[0]+r/2)
+        ax.set_ylim(c[1]-r/2, c[1]+r/2)
+        ax.set_zlim(c[2]-r/2, c[2]+r/2)
+
+    # hide grid, ticks, numbers, axes
+    try: ax.set_axis_off()
+    except Exception: pass
+    ax.grid(False)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        try:
+            axis.set_ticks([]); axis.set_ticklabels([])
+            pane = getattr(axis, "pane", None)
+            if pane is not None:
+                pane.set_edgecolor((1,1,1,0)); pane.set_alpha(0.0)
+        except Exception: pass
+
+    plt.tight_layout()
+    plt.show()
