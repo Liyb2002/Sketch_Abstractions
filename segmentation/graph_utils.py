@@ -809,48 +809,47 @@ def print_confidence_preview(C, D, components, global_thresh, top_k=3, max_rows=
 # ========================================================================================== #
 
 
-def propagate_confidences(
+def propagate_confidences_safe(
     C_init,
     intersect_pairs,
     perp_pairs,
     loops,
-    w_inter=0.1,
-    w_perp=0.1,
-    w_loop=0.3,
+    w_self=1.0,     # self term
+    w_inter=0.1,    # intersect relation (per-iteration total, not per-neighbor)
+    w_perp=0.1,     # perpendicular relation
+    w_loop=0.3,     # planar-loop relation
     iters=10,
-    tol=None,
+    alpha=0.75,     # restart strength: new = (1-alpha)*C_init + alpha*mix
+    use_trust=True, # downweight neighbors with high entropy / low margin
 ):
     """
-    Iteratively propagate per-stroke confidences over stroke relations.
+    Safer iterative propagation:
+      C_next = (1-alpha)*C_init + alpha * RowNormalize( w_self*C +
+                   w_inter*Avg_inter_neighbors + w_perp*Avg_perp_neighbors +
+                   w_loop*Avg_loop_neighbors )
 
-    C_init:  (N x K) initial confidences (rows need not be strictly normalized; we normalize each iter)
-    intersect_pairs: List[(i,j)]     undirected pairs
-    perp_pairs:      List[(i,j)]     undirected pairs
-    loops:           List[List[int]] each list is a 3- or 4-stroke loop (undirected fully-connected inside the loop)
-    w_inter, w_perp, w_loop: weights as specified
-    iters: number of synchronous update iterations
-    tol: if provided, stop early when max abs change per entry < tol
-
-    Returns:
-      C: (N x K) propagated confidences (row-stochastic: sums to 1 when any mass exists)
+    - Averages over neighbors in EACH relation (degree-normalized) to prevent
+      large components from amplifying.
+    - Restarts toward C_init each iter (like PageRank with teleportation).
+    - Optional neighbor 'trust' based on label margin reduces propagation from
+      uncertain neighbors.
     """
-    C = np.asarray(C_init, dtype=float).copy()
+    C_init = np.asarray(C_init, dtype=float)
+    C = C_init.copy()
     N, K = C.shape
 
-    # --- build neighbor lists ---
+    # ---- build neighbor lists ----
     def _build_neighbors(pairs):
         neigh = [set() for _ in range(N)]
         for a, b in pairs:
             if 0 <= a < N and 0 <= b < N and a != b:
                 neigh[a].add(b)
                 neigh[b].add(a)
-        # return lists for faster iteration
         return [list(s) for s in neigh]
 
     interN = _build_neighbors(intersect_pairs)
     perpN  = _build_neighbors(perp_pairs)
 
-    # loop neighbors: fully connect members within each loop
     loopN = [set() for _ in range(N)]
     for grp in loops:
         g = [i for i in grp if 0 <= i < N]
@@ -860,32 +859,67 @@ def propagate_confidences(
                     loopN[u].add(v)
     loopN = [list(s) for s in loopN]
 
-    # --- iterate ---
+    # helper: compute neighbor average with optional trust weights
+    def _avg_neighbors(prev, nbrs, trust=None):
+        if not nbrs:
+            return np.zeros(K, dtype=float)
+        if trust is None:
+            return np.mean(prev[nbrs, :], axis=0)
+        # weighted average by trust values (clip to [0,1])
+        t = np.clip(trust[nbrs], 0.0, 1.0)
+        s = t.sum()
+        if s <= 0:
+            return np.zeros(K, dtype=float)
+        return (prev[nbrs, :]*t[:, None]).sum(axis=0) / s
+
     for _ in range(max(1, int(iters))):
         prev = C.copy()
-        # accumulate new values
+
+        # neighbor trust per node (margin between top-1 and top-2 labels)
+        if use_trust and K >= 2:
+            # top and second top
+            top2_idx = np.argpartition(-prev, kth=1, axis=1)[:, :2]
+            row = np.arange(N)[:, None]
+            top_vals = prev[row, top2_idx]
+            margins = np.abs(top_vals[:, 0] - top_vals[:, 1])  # shape (N,)
+            trust = margins  # in [0,1]; higher margin => more trusted
+        else:
+            trust = None
+
+        mix = np.zeros_like(prev)
+
         for i in range(N):
-            acc = prev[i].copy()  # self
+            acc = np.zeros(K, dtype=float)
+
+            # self
+            acc += w_self * prev[i]
+
+            # intersect neighbors (degree-normalized)
             if interN[i]:
-                for j in interN[i]:
-                    acc += w_inter * prev[j]
+                acc += w_inter * _avg_neighbors(prev, interN[i], trust)
+
+            # perpendicular neighbors
             if perpN[i]:
-                for j in perpN[i]:
-                    acc += w_perp * prev[j]
+                acc += w_perp * _avg_neighbors(prev, perpN[i], trust)
+
+            # loop neighbors
             if loopN[i]:
-                for j in loopN[i]:
-                    acc += w_loop * prev[j]
+                acc += w_loop * _avg_neighbors(prev, loopN[i], trust)
 
-            # normalize row
-            s = acc.sum()
-            if s > 0:
-                C[i] = acc / s
-            else:
-                C[i] = acc  # stays all-zero if truly no mass
+            mix[i] = acc
 
-        if tol is not None:
-            if np.max(np.abs(C - prev)) < tol:
-                break
+        # row-normalize the mixed message
+        row_sum = mix.sum(axis=1, keepdims=True)
+        mask = row_sum[:, 0] > 0
+        mix[mask] /= row_sum[mask]
+
+        # restart toward the original unary C_init
+        C = (1.0 - alpha) * C_init + alpha * mix
+
+        # final row-normalize (keeps rows summing to 1 when there is mass)
+        row_sum = C.sum(axis=1, keepdims=True)
+        mask = row_sum[:, 0] > 0
+        C[mask] /= row_sum[mask]
 
     return C
 

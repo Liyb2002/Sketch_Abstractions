@@ -44,17 +44,14 @@ def run_once():
     D = graph_utils.stroke_cuboid_distance_matrix(perturbed_feature_lines, components)
     C_init = graph_utils.distances_to_confidence(D, global_thresh)  # shape: (num_strokes, num_cuboids)
 
-    # 5) Propagate confidences over relations (intersections / perpendicular / planar loops)
-    C = graph_utils.propagate_confidences(
+    # 5) Propagate confidences (safer)
+    C = graph_utils.propagate_confidences_safe(
         C_init=C_init,
         intersect_pairs=intersect_pairs,
         perp_pairs=perp_pairs,
         loops=loops,
-        w_inter=0.1,
-        w_perp=0.1,
-        w_loop=0.3,
-        iters=10,     # bump up/down as you like
-        tol=1e-6,     # or None to run fixed iters
+        w_self=1.0, w_inter=0.1, w_perp=0.1, w_loop=0.3,
+        iters=10, alpha=0.75, use_trust=True,
     )
 
 
