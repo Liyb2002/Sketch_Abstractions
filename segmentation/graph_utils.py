@@ -622,6 +622,281 @@ def compute_global_threshold(feature_lines):
 
 
 
+# ========================================================================================== #
+
+
+
+def stroke_cuboid_distance_matrix(sample_points, components):
+    """
+    Build a (num_strokes x num_cuboids) matrix of average min distances
+    from each stroke to each cuboid's edges.
+
+    Inputs:
+      - sample_points: List over strokes. Each stroke is either:
+            [(x,y,z), ...]                    # flat list of points
+        or  [ [(x,y,z),...], [(x,y,z),...], ... ]  # list of polylines
+      - components: List[CuboidGeom], each exposing .edges() -> list of 12 (a,b) endpoints
+
+    Returns:
+      - D: np.ndarray of shape (num_strokes, num_cuboids), dtype=float
+           D[i, j] = stroke_to_cuboid_distance(points_i, components[j].edges())
+           Empty strokes get +inf.
+    """
+
+    def _flatten_to_numpy(pts):
+        # No imports; assume np is available in your environment (as in your snippet).
+        if not pts:
+            return np.empty((0, 3), dtype=float)
+
+        first = pts[0] if isinstance(pts, (list, tuple)) and pts else None
+
+        # Case A: flat list of points
+        if isinstance(first, (list, tuple)) and len(first) == 3:
+            arr = np.asarray(pts, dtype=float)
+            if arr.ndim == 2 and arr.shape[1] == 3:
+                return arr
+            # fallback if odd shapes
+            buf = []
+            for p in pts:
+                if isinstance(p, (list, tuple)) and len(p) == 3:
+                    buf.append([float(p[0]), float(p[1]), float(p[2])])
+            return np.asarray(buf, dtype=float) if buf else np.empty((0, 3), dtype=float)
+
+        # Case B: list of polylines (each a list of points)
+        buf = []
+        for seg in pts:
+            if not seg:
+                continue
+            if isinstance(seg, (list, tuple)) and seg and isinstance(seg[0], (list, tuple)) and len(seg[0]) == 3:
+                for p in seg:
+                    if isinstance(p, (list, tuple)) and len(p) == 3:
+                        buf.append([float(p[0]), float(p[1]), float(p[2])])
+        return np.asarray(buf, dtype=float) if buf else np.empty((0, 3), dtype=float)
+
+    num_strokes = len(sample_points)
+    num_cuboids = len(components)
+
+    # Pre-extract edges for all cuboids once
+    edges_list = [comp.edges() for comp in components]
+
+    D = np.full((num_strokes, num_cuboids), np.inf, dtype=float)
+    for si, stroke in enumerate(sample_points):
+        P = _flatten_to_numpy(stroke)
+        if P.size == 0:
+            continue
+        for cj, edges in enumerate(edges_list):
+            D[si, cj] = stroke_to_cuboid_distance(P, edges)
+
+    return D
+
+
+
+def stroke_to_cuboid_distance(P, edges, eps=1e-12):
+    """
+    Average-of-min-edge distance from a stroke to a cuboid.
+
+    Args:
+      P     : np.ndarray of shape (N, 3) — sampled points for one stroke.
+      edges : iterable of ((ax,ay,az), (bx,by,bz)) for the cuboid's 12 edges.
+      eps   : small number to guard degenerate edges.
+
+    Returns:
+      float distance = mean_i  min_e  dist(point_i, segment_e)
+      If P is empty, returns +inf.
+    """
+    P = np.asarray(P, dtype=float).reshape(-1, 3)
+    if P.size == 0:
+        return float('inf')
+
+    # Keep the best (smallest) squared distance per point across all edges
+    min_d2 = np.full(P.shape[0], np.inf, dtype=float)
+
+    for a, b in edges:
+        A = np.asarray(a, dtype=float)
+        B = np.asarray(b, dtype=float)
+        U = B - A
+        denom = float(U[0]*U[0] + U[1]*U[1] + U[2]*U[2])
+
+        if denom < eps:
+            # Degenerate edge: treat as a point
+            diff = P - A
+            d2 = (diff[:, 0]**2 + diff[:, 1]**2 + diff[:, 2]**2)
+        else:
+            # Project each point onto the segment, clamp t to [0,1]
+            AP = P - A
+            t = (AP[:, 0]*U[0] + AP[:, 1]*U[1] + AP[:, 2]*U[2]) / denom
+            t = np.clip(t, 0.0, 1.0)
+            C = A + t[:, None] * U  # closest point on segment for each P
+            diff = P - C
+            d2 = (diff[:, 0]**2 + diff[:, 1]**2 + diff[:, 2]**2)
+
+        # Best edge so far for each point
+        min_d2 = np.minimum(min_d2, d2)
+
+    # Average of per-point minimal distances (not squared)
+    return float(np.sqrt(min_d2).mean())
+
+
+
+def distances_to_confidence(D, global_thresh, eps=1e-12):
+    """
+    Convert (num_strokes x num_cuboids) distances to per-stroke confidences.
+    Uses RBF weights: w = exp(-(d/tau)^2), tau = global_thresh.
+    Rows are normalized to sum to 1 when there is any finite entry.
+    """
+    D = np.asarray(D, dtype=float)
+    tau = max(float(global_thresh * 5), eps)
+
+    # RBF weights; invalid distances -> 0
+    W = np.exp(-np.square(D / tau))
+    W[~np.isfinite(D)] = 0.0
+
+    # Row-wise normalize (avoid shape mismatch)
+    row_sum = W.sum(axis=1)                 # shape: (num_strokes,)
+    mask = row_sum > 0                      # shape: (num_strokes,)
+    W[mask] = W[mask] / row_sum[mask][:, None]  # broadcast divide per selected row
+    # rows with no finite entries stay all-zeros
+    return W
+
+
+
+def print_confidence_preview(C, D, components, global_thresh, top_k=3, max_rows=5, indices=None):
+    """
+    Pretty-print top-k cuboids per stroke with (confidence, distance).
+      C: (num_strokes x num_cuboids) confidence matrix
+      D: (num_strokes x num_cuboids) distance matrix
+      components: list of executed cuboids (each has .name)
+      global_thresh: tau used in distances_to_confidence
+      top_k: how many cuboids to show per stroke
+      max_rows: how many strokes from the top to preview (ignored if 'indices' provided)
+      indices: optional explicit list of stroke indices to preview
+    """
+    import numpy as np
+
+    print(f"[conf] tau (global_thresh) = {float(global_thresh):.6g}")
+    if C is None or D is None or C.size == 0 or D.size == 0:
+        print("[conf] Empty matrices.")
+        return
+
+    cuboid_names = [getattr(c, "name", f"cuboid_{j}") for j, c in enumerate(components)]
+    num_strokes = C.shape[0]
+    num_cuboids = C.shape[1]
+
+    if indices is None:
+        indices = list(range(min(max_rows, num_strokes)))
+
+    def _fmt(x):  # distance formatter
+        return "inf" if not np.isfinite(x) else f"{float(x):.4g}"
+
+    for i in indices:
+        if i < 0 or i >= num_strokes:
+            continue
+        # If the row has no finite distances, just say so
+        if not np.isfinite(D[i]).any():
+            print(f"stroke {i:3d} → (no valid samples)")
+            continue
+
+        order = np.argsort(-C[i])  # descending by confidence
+        k = min(top_k, num_cuboids)
+        parts = []
+        for j in order[:k]:
+            name = cuboid_names[j] if j < len(cuboid_names) else f"cuboid_{j}"
+            parts.append(f"{name}(p={C[i,j]:.3f}, d={_fmt(D[i,j])})")
+        print(f"stroke {i:3d} → " + ", ".join(parts))
+
+
+
+# ========================================================================================== #
+
+
+def propagate_confidences(
+    C_init,
+    intersect_pairs,
+    perp_pairs,
+    loops,
+    w_inter=0.1,
+    w_perp=0.1,
+    w_loop=0.3,
+    iters=10,
+    tol=None,
+):
+    """
+    Iteratively propagate per-stroke confidences over stroke relations.
+
+    C_init:  (N x K) initial confidences (rows need not be strictly normalized; we normalize each iter)
+    intersect_pairs: List[(i,j)]     undirected pairs
+    perp_pairs:      List[(i,j)]     undirected pairs
+    loops:           List[List[int]] each list is a 3- or 4-stroke loop (undirected fully-connected inside the loop)
+    w_inter, w_perp, w_loop: weights as specified
+    iters: number of synchronous update iterations
+    tol: if provided, stop early when max abs change per entry < tol
+
+    Returns:
+      C: (N x K) propagated confidences (row-stochastic: sums to 1 when any mass exists)
+    """
+    C = np.asarray(C_init, dtype=float).copy()
+    N, K = C.shape
+
+    # --- build neighbor lists ---
+    def _build_neighbors(pairs):
+        neigh = [set() for _ in range(N)]
+        for a, b in pairs:
+            if 0 <= a < N and 0 <= b < N and a != b:
+                neigh[a].add(b)
+                neigh[b].add(a)
+        # return lists for faster iteration
+        return [list(s) for s in neigh]
+
+    interN = _build_neighbors(intersect_pairs)
+    perpN  = _build_neighbors(perp_pairs)
+
+    # loop neighbors: fully connect members within each loop
+    loopN = [set() for _ in range(N)]
+    for grp in loops:
+        g = [i for i in grp if 0 <= i < N]
+        for u in g:
+            for v in g:
+                if u != v:
+                    loopN[u].add(v)
+    loopN = [list(s) for s in loopN]
+
+    # --- iterate ---
+    for _ in range(max(1, int(iters))):
+        prev = C.copy()
+        # accumulate new values
+        for i in range(N):
+            acc = prev[i].copy()  # self
+            if interN[i]:
+                for j in interN[i]:
+                    acc += w_inter * prev[j]
+            if perpN[i]:
+                for j in perpN[i]:
+                    acc += w_perp * prev[j]
+            if loopN[i]:
+                for j in loopN[i]:
+                    acc += w_loop * prev[j]
+
+            # normalize row
+            s = acc.sum()
+            if s > 0:
+                C[i] = acc / s
+            else:
+                C[i] = acc  # stays all-zero if truly no mass
+
+        if tol is not None:
+            if np.max(np.abs(C - prev)) < tol:
+                break
+
+    return C
+
+
+
+
+# ========================================================================================== #
+
+
+
+
 def vis_perturbed_strokes(
     perturbed_feature_lines,
     perturbed_construction_lines,
@@ -1048,4 +1323,117 @@ def vis_stroke_node_features(stroke_node_features):
     ax.set_zticks([])
 
     # Show plot
+    plt.show()
+
+
+
+
+def visualize_strokes_by_confidence(sample_points, C, components=None, title="Assignments"):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import get_cmap
+    from matplotlib.lines import Line2D
+
+    sample_points = sample_points or []
+    C = np.asarray(C, dtype=float)
+    N, K = C.shape if C.ndim == 2 else (len(sample_points), 0)
+
+    names = [
+        getattr(components[j], "name", f"cuboid_{j}") if (components and j < len(components)) else f"cuboid_{j}"
+        for j in range(K)
+    ]
+
+    row_sum = C.sum(axis=1) if K > 0 else np.zeros((N,), dtype=float)
+    labels = np.full(N, -1, dtype=int)
+    has_mass = row_sum > 0
+    if K > 0:
+        labels[has_mass] = np.argmax(C[has_mass], axis=1)
+
+    if K <= 20:
+        base = get_cmap('tab20')(np.linspace(0, 1, 20))
+        colors = base[:K] if K > 0 else np.empty((0, 4))
+    else:
+        colors = get_cmap('hsv')(np.linspace(0, 1, K, endpoint=False))
+    color_unassigned = (0.6, 0.6, 0.6, 1.0)
+
+    def _iter_polylines(pts):
+        if not pts:
+            return
+        first = pts[0] if isinstance(pts, (list, tuple)) and pts else None
+        if isinstance(first, (list, tuple)) and len(first) == 3:
+            arr = np.asarray(pts, dtype=float).reshape(-1, 3)
+            if arr.size:
+                yield arr
+        else:
+            for seg in pts:
+                if not seg:
+                    continue
+                arr = np.asarray(seg, dtype=float).reshape(-1, 3)
+                if arr.size:
+                    yield arr
+
+    mins = np.array([np.inf, np.inf, np.inf], dtype=float)
+    maxs = -mins
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_title(title)
+
+    for i, stroke in enumerate(sample_points):
+        col = color_unassigned if labels[i] < 0 else colors[labels[i]]
+        for arr in _iter_polylines(stroke):
+            if arr.shape[0] >= 2:
+                ax.plot(arr[:, 0], arr[:, 1], arr[:, 2], linewidth=1.6, alpha=0.95, color=col)
+            else:
+                ax.scatter(arr[:, 0], arr[:, 1], arr[:, 2], s=8, alpha=0.95, color=col)
+            mins = np.minimum(mins, arr.min(axis=0))
+            maxs = np.maximum(maxs, arr.max(axis=0))
+
+    # Equal aspect
+    if np.all(np.isfinite(mins)) and np.all(np.isfinite(maxs)):
+        ranges = maxs - mins
+        max_range = ranges.max() if ranges.max() > 0 else 1.0
+        centers = (maxs + mins) / 2.0
+        ext = max_range / 2.0
+        ax.set_xlim(centers[0] - ext, centers[0] + ext)
+        ax.set_ylim(centers[1] - ext, centers[1] + ext)
+        ax.set_zlim(centers[2] - ext, centers[2] + ext)
+
+    # ---- Hide axes, grids, and numbers (keep legend) ----
+    # Try the simple way first:
+    try:
+        ax.set_axis_off()
+    except Exception:
+        pass
+    # Belt & suspenders for 3D:
+    ax.grid(False)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        try:
+            axis.set_ticks([])
+            axis.set_ticklabels([])
+            # Make panes invisible
+            pane = getattr(axis, "pane", None)
+            if pane is not None:
+                pane.set_edgecolor((1, 1, 1, 0))
+                pane.set_alpha(0.0)
+        except Exception:
+            pass
+    # Remove axis lines if present (older mpl):
+    for attr in ("w_xaxis", "w_yaxis", "w_zaxis"):
+        if hasattr(ax, attr):
+            try:
+                getattr(ax, attr).line.set_lw(0.0)
+            except Exception:
+                pass
+
+    # Legend: explanation for the lines (keep this visible)
+    used = sorted(set([l for l in labels if l >= 0]))
+    legend_elems = [Line2D([0], [0], color=color_unassigned, lw=2, label="unassigned")] if (-1 in labels) else []
+    for j in used:
+        nm = names[j] if j < len(names) else f"cuboid_{j}"
+        legend_elems.append(Line2D([0], [0], color=colors[j], lw=2, label=nm))
+    if legend_elems:
+        ax.legend(handles=legend_elems, loc="upper right", frameon=True)
+
+    plt.tight_layout()
     plt.show()
