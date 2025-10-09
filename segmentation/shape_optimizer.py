@@ -17,7 +17,10 @@ from typing import Iterable, List, Dict, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+import copy
+import math
 
+EPS_Z = 1e-9  # dz tolerance
 
 
 # 1)Straight Line: Point_1 (3 value), Point_2 (3 value), 0, 0, 0, 1
@@ -519,6 +522,74 @@ def _print_diagnostics(tag: str,
 
 
 # ---------- Public API ----------
+def _height_from_aabb(min3, max3):
+    return max3[2] - min3[2]
+
+def _cuboids_height_from_executor(exe):
+    """
+    Compute height (Z span) of cuboid/box primitives inside an already-executed program.
+    Falls back to whole-geometry height if no cuboids are found.
+    No extra execution is performed.
+    """
+    def _looks_like_cuboid(obj):
+        tag = (type(obj).__name__ + " " + str(getattr(obj, "type", "")) + " " + str(getattr(obj, "kind", ""))).lower()
+        return any(k in tag for k in ("cuboid", "box", "rectangular_prism", "rect-prism", "block"))
+
+    def _try_get_aabb(obj):
+        for meth in ("aabb", "bbox", "bounds", "get_aabb", "get_bbox", "get_bounds"):
+            if hasattr(obj, meth):
+                b = getattr(obj, meth)
+                b = b() if callable(b) else b
+                if isinstance(b, (list, tuple)) and len(b) == 2 and all(len(x) == 3 for x in b):
+                    return tuple(b[0]), tuple(b[1])
+                if hasattr(b, "min") and hasattr(b, "max") and len(b.min) == 3 and len(b.max) == 3:
+                    return tuple(b.min), tuple(b.max)
+                if isinstance(b, (list, tuple)) and len(b) == 6:
+                    return (b[0], b[1], b[2]), (b[3], b[4], b[5])
+        for attr in ("vertices", "points", "verts"):
+            if hasattr(obj, attr):
+                pts = getattr(obj, attr)
+                try:
+                    zs = [p[2] for p in pts]
+                    zmin, zmax = min(zs), max(zs)
+                    # we only need height; return dummy xy
+                    return (0.0, 0.0, zmin), (0.0, 0.0, zmax)
+                except Exception:
+                    pass
+        return None
+
+    def _iter_shapes(exe):
+        for attr in ("solids", "objects", "nodes", "instances", "shapes", "prims"):
+            if hasattr(exe, attr):
+                bag = getattr(exe, attr)
+                if isinstance(bag, dict):
+                    yield from bag.values()
+                else:
+                    try:
+                        for v in bag:
+                            yield v
+                    except TypeError:
+                        pass
+
+    zmin, zmax = math.inf, -math.inf
+    count = 0
+    for obj in _iter_shapes(exe):
+        if not _looks_like_cuboid(obj):
+            continue
+        ab = _try_get_aabb(obj)
+        if not ab:
+            continue
+        a, b = ab
+        zmin = min(zmin, a[2]); zmax = max(zmax, b[2])
+        count += 1
+
+    if count > 0 and zmin < math.inf and zmax > -math.inf:
+        return zmax - zmin, count
+
+    # Fallback: use overall geometry AABB height
+    gmin, gmax = _geom_aabb_from_executor(exe)
+    return _height_from_aabb(gmin, gmax), 0
+
 def rescale_and_execute(input_dir: Path, ir_path) -> Executor:
     info_path = input_dir / "info.json"
     if not ir_path.exists():
@@ -527,44 +598,62 @@ def rescale_and_execute(input_dir: Path, ir_path) -> Executor:
         raise SystemExit(f"info.json not found: {info_path}")
 
     # Load IR & info
-    ir = json.loads(ir_path.read_text(encoding="utf-8"))
+    ir_original_text = ir_path.read_text(encoding="utf-8")
+    ir = json.loads(ir_original_text)
     info = json.loads(info_path.read_text(encoding="utf-8"))
 
     # Execute current IR & compute AABBs
     exe_before = Executor(ir)
     strokes_min, strokes_max = _strokes_aabb_from_info(info)
     geom_min, geom_max = _geom_aabb_from_executor(exe_before)
-    _print_diagnostics("before shift", strokes_min, strokes_max, geom_min, geom_max)
 
-    # Decide Z shift
+    # ---- Heights (no extra execution) ----
+    strokes_h = _height_from_aabb(strokes_min, strokes_max)
+    cuboids_h_before, cub_count_before = _cuboids_height_from_executor(exe_before)
+    print(f"[BEFORE] heights — strokes: {strokes_h:.6f}, cuboids: {cuboids_h_before:.6f} "
+          f"(Δ={cuboids_h_before - strokes_h:.6f}, cuboids_found={cub_count_before})")
+
+    # Decide Z shift based on overall geometry (unchanged from your logic)
     dz_min = strokes_min[2] - geom_min[2]
     dz_max = strokes_max[2] - geom_max[2]
     dz = dz_min if abs(dz_min) <= abs(dz_max) else dz_max
     print(f"Proposed Z shift dz = {dz:.6f}")
 
-    if abs(dz) >= 1e-9:
-        _shift_ir_bbox_z_inplace(ir, dz)
-        # overwrite original so downstream tools see the shift
-        ir_path.write_text(json.dumps(ir, indent=2), encoding="utf-8")
-        print(f"🧩 Overwrote IR with Z-shift at: {ir_path}")
+    # Mutate on a copy; compare to avoid unnecessary writes
+    ir_mut = copy.deepcopy(ir)
+
+    if abs(dz) >= EPS_Z:
+        _shift_ir_bbox_z_inplace(ir_mut, dz)
+        print("🧩 Applied Z shift.")
     else:
-        print("dz negligible; IR not modified.")
+        print("dz negligible; no Z shift needed.")
 
-    # ---- NEW: normalize attaches to a parent tree, preserving current world placement
-    ir_norm = json.loads(ir_path.read_text(encoding="utf-8"))
-    normalize_attaches_to_parent_tree_inplace(ir_norm)
-    # Write a sibling file for debugging/inspection (optional)
-    out_norm_path = ir_path.with_name(ir_path.stem + "_parenttree.json")
-    out_norm_path.write_text(json.dumps(ir_norm, indent=2), encoding="utf-8")
-    print(f"🔧 Wrote normalized parent-tree IR: {out_norm_path}")
+    before_norm = json.dumps(ir_mut, sort_keys=True)
+    normalize_attaches_to_parent_tree_inplace(ir_mut)
+    after_norm = json.dumps(ir_mut, sort_keys=True)
+    if before_norm != after_norm:
+        print("🔧 Normalized parent-tree attaches.")
 
-    # Re-execute normalized IR
-    exe_after = Executor(ir_norm)
+    # Write only if changed
+    ir_mut_text = json.dumps(ir_mut, indent=2)
+    if ir_mut_text != ir_original_text:
+        ir_path.write_text(ir_mut_text, encoding="utf-8")
+        print(f"💾 Saved updated IR to: {ir_path}")
+    else:
+        print("No changes required; IR not modified.")
+
+    # Re-execute what’s on disk (not “extra”; this is your existing after step)
+    ir_after = json.loads(ir_path.read_text(encoding="utf-8"))
+    exe_after = Executor(ir_after)
     geom_min2, geom_max2 = _geom_aabb_from_executor(exe_after)
-    _print_diagnostics("after shift+normalize", strokes_min, strokes_max, geom_min2, geom_max2)
+
+    # ---- Heights AFTER (using the executor we already created) ----
+    cuboids_h_after, cub_count_after = _cuboids_height_from_executor(exe_after)
+    strokes_h_after = strokes_h  # strokes come from info.json; unchanged by IR edits
+    print(f"[AFTER ] heights — strokes: {strokes_h_after:.6f}, cuboids: {cuboids_h_after:.6f} "
+          f"(Δ={cuboids_h_after - strokes_h_after:.6f}, cuboids_found={cub_count_after})")
 
     return exe_after
-
 
 
 

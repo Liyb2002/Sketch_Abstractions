@@ -22,7 +22,7 @@ import graph_utils
 
 def run_once():
     input_dir = Path.cwd().parent / "input"
-    ir_path   = input_dir / "sketch_program_ir_editted.json"
+    ir_path   = input_dir / "sketch_program_ir.json"
 
     # 1) Rescale & execute (this is your "old" assembly before the edit)
     exe_old = rescale_and_execute(input_dir, ir_path)  # Executor

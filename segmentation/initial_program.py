@@ -29,6 +29,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 from openai import OpenAI  # used for Step-1
 
+
+from program_executor import Executor
+
+
 # ---------- Config ----------
 INPUT_DIR = Path.cwd().parent / "input"
 MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")  # chat model; no images used here
@@ -550,34 +554,196 @@ def deterministic_step3_translate(ir_in: Dict[str, Any], tol: float = 1e-6) -> D
 # ---------- Deterministic scaling (after Step-3) ----------
 def deterministic_scale_to_strokes_bbox(ir_in: Dict[str, Any], input_dir: Path) -> Dict[str, Any]:
     """
-    Deterministically edit program.bblock to match the strokes' AABB, and rescale all cuboids:
-      - Compute (min,max) from perturbed_feature_lines.json.
-      - Set bblock.min = min, bblock.max = max, and bblock.l/w/h = max - min.
-      - Rescale each cuboid's (l,w,h) by per-axis ratios new_size / old_size.
-      - Leave attach/squeeze/reflect/translate untouched (they are normalized).
+    Deterministically scale the program so the *executed geometry spans* (L,W,H)
+    match the strokes' AABB spans. Then set program.bblock.{min,max,l,w,h} to the
+    strokes' bbox. Prints a side-by-side report.
+
+    Notes
+    -----
+    - Current spans are computed from the *executed cuboids* (like your
+      _cuboids_height_from_executor logic, generalized to X/Y/Z).
+    - Executor is loaded dynamically from a sibling 'program_executor.py'.
+    - We only scale sizes (l,w,h) in IR; we don't rewrite anchors/translates.
+    - After scaling + declaring bbox to strokes AABB, we re-execute for the final report.
     """
-    ir = json.loads(json.dumps(ir_in))  # deep copy
-    mn, mx = strokes_aabb(input_dir)
-    L, W, H = (mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2])
+    import json as _json
+    import math as _math
+    import importlib.util as _importlib_util
+    from pathlib import Path as _Path
 
+    # ------------------------ sub-functions (scoped) ------------------------
+
+    def _load_executor_from_neighbor():
+        """Load program_executor.Executor from the same folder as this file."""
+        here = _Path(__file__).parent
+        mod_path = here / "program_executor.py"
+        if not mod_path.exists():
+            raise RuntimeError(f"program_executor.py not found next to {__file__}")
+        spec = _importlib_util.spec_from_file_location("program_executor", str(mod_path))
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Could not load spec for program_executor.py")
+        module = _importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[attr-defined]
+        if not hasattr(module, "Executor"):
+            raise RuntimeError("program_executor.py does not define Executor")
+        return module.Executor
+
+    def _executed_cuboids_aabb(exe) -> Tuple[Tuple[float,float,float], Tuple[float,float,float], int]:
+        """
+        AABB over executed **cuboid primitives** (exclude bbox).
+        Returns (min, max, count). If no cuboids found, returns (inf,-inf,0) for detection.
+        """
+        prims = []
+        try:
+            prims = exe.primitives()
+        except Exception:
+            prims = []
+
+        if not prims:
+            return ( _math.inf, _math.inf, _math.inf ), ( -_math.inf, -_math.inf, -_math.inf ), 0
+
+        xmins, ymins, zmins = [], [], []
+        xmaxs, ymaxs, zmaxs = [], [], []
+        for p in prims:
+            # p.origin = min corner; p.size = (l,w,h)
+            x0, y0, z0 = float(p.origin[0]), float(p.origin[1]), float(p.origin[2])
+            l,  w,  h  = float(p.size[0]),   float(p.size[1]),   float(p.size[2])
+            x1, y1, z1 = x0 + l, y0 + w, z0 + h
+            xmins.append(x0); ymins.append(y0); zmins.append(z0)
+            xmaxs.append(x1); ymaxs.append(y1); zmaxs.append(z1)
+        mn = (min(xmins), min(ymins), min(zmins))
+        mx = (max(xmaxs), max(ymaxs), max(zmaxs))
+        return mn, mx, len(prims)
+
+    def _overall_geom_aabb_fallback(exe) -> Tuple[Tuple[float,float,float], Tuple[float,float,float]]:
+        """
+        Fallback to overall geometry AABB if no cuboid prims were found.
+        Uses instances if available; otherwise returns bbox-sized degenerate.
+        """
+        # Try instances on the executor (program_executor.Executor keeps instances dict)
+        if hasattr(exe, "instances") and isinstance(exe.instances, dict):
+            xmins, ymins, zmins = [], [], []
+            xmaxs, ymaxs, zmaxs = [], [], []
+            for name, inst in exe.instances.items():
+                if name == "bbox":
+                    continue
+                try:
+                    l, w, h = float(inst.spec.l), float(inst.spec.w), float(inst.spec.h)
+                    ox, oy, oz = float(inst.T[0,3]), float(inst.T[1,3]), float(inst.T[2,3])
+                    x0, y0, z0 = ox, oy, oz
+                    x1, y1, z1 = ox + l, oy + w, oz + h
+                    xmins.append(x0); ymins.append(y0); zmins.append(z0)
+                    xmaxs.append(x1); ymaxs.append(y1); zmaxs.append(z1)
+                except Exception:
+                    pass
+            if xmins:
+                return (min(xmins), min(ymins), min(zmins)), (max(xmaxs), max(ymaxs), max(zmaxs))
+
+        # As a last resort, use bbox itself (no placed parts)
+        if hasattr(exe, "bbox"):
+            # bbox min is in instances["bbox"].T
+            try:
+                bb_inst = exe.instances["bbox"]
+                l, w, h = float(bb_inst.spec.l), float(bb_inst.spec.w), float(bb_inst.spec.h)
+                ox, oy, oz = float(bb_inst.T[0,3]), float(bb_inst.T[1,3]), float(bb_inst.T[2,3])
+                return (ox, oy, oz), (ox + l, oy + w, oz + h)
+            except Exception:
+                pass
+        # If truly nothing, return a degenerate zero box at origin
+        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+
+    def _spans_from_aabb(mn, mx) -> Tuple[float,float,float]:
+        return (float(mx[0]-mn[0]), float(mx[1]-mn[1]), float(mx[2]-mn[2]))
+
+    def _safe_div(n: float, d: float) -> float:
+        # If current span is ~0, scale factor should be 0 when target is 0, else a big stretch.
+        if abs(d) < 1e-12:
+            return 0.0 if abs(n) < 1e-12 else (n / 1e-12)
+        return n / d
+
+    def _scale_all_cuboids_inplace(ir_obj: Dict[str,Any], sx: float, sy: float, sz: float) -> None:
+        for c in ir_obj["program"].get("cuboids", []):
+            c["l"] = float(c["l"]) * sx
+            c["w"] = float(c["w"]) * sy
+            c["h"] = float(c["h"]) * sz
+        for sub in ir_obj["program"].get("subroutines", []):
+            sig = sub.get("sig", {})
+            if {"l","w","h"}.issubset(sig):
+                sig["l"] = float(sig["l"]) * sx
+                sig["w"] = float(sig["w"]) * sy
+                sig["h"] = float(sig["h"]) * sz
+            for c in sub.get("cuboids", []):
+                c["l"] = float(c["l"]) * sx
+                c["w"] = float(c["w"]) * sy
+                c["h"] = float(c["h"]) * sz
+
+    def _fmt3(v) -> str:
+        return f"({float(v[0]):.6f}, {float(v[1]):.6f}, {float(v[2]):.6f})"
+
+    # ------------------------ core logic ------------------------
+
+    # Deep copy IR to avoid mutating caller
+    ir = _json.loads(_json.dumps(ir_in))
+
+    # Target spans from strokes
+    tgt_min, tgt_max = strokes_aabb(input_dir)
+    tgt_L, tgt_W, tgt_H = _spans_from_aabb(tgt_min, tgt_max)
+
+    # Execute *current* IR and measure executed spans from cuboids
+    Executor = _load_executor_from_neighbor()
+    exe_before = Executor(ir)
+    cub_min, cub_max, cub_ct = _executed_cuboids_aabb(exe_before)
+    if cub_ct == 0 or _math.isinf(cub_min[0]):
+        # fallback to overall geometry if no cuboid prims reported
+        cub_min, cub_max = _overall_geom_aabb_fallback(exe_before)
+    cur_L, cur_W, cur_H = _spans_from_aabb(cub_min, cub_max)
+
+    # Compute per-axis scale based on *executed* spans (this is the key!)
+    sx = _safe_div(tgt_L, cur_L)
+    sy = _safe_div(tgt_W, cur_W)
+    sz = _safe_div(tgt_H, cur_H)
+
+    # Scale all cuboids
+    _scale_all_cuboids_inplace(ir, sx, sy, sz)
+
+    # Declare bbox exactly as strokes AABB
     bb = ir["program"]["bblock"]
-    L0, W0, H0 = float(bb["l"]), float(bb["w"]), float(bb["h"])
-
-    def sdiv(n, d): return (n/d) if abs(d) > 1e-12 else 1.0
-    sx, sy, sz = sdiv(L, L0), sdiv(W, W0), sdiv(H, H0)
-
-    # Write new bbox grammar: size + min/max
-    bb["l"], bb["w"], bb["h"] = float(L), float(W), float(H)
-    bb["min"] = [float(mn[0]), float(mn[1]), float(mn[2])]
-    bb["max"] = [float(mx[0]), float(mx[1]), float(mx[2])]
+    bb["l"], bb["w"], bb["h"] = float(tgt_L), float(tgt_W), float(tgt_H)
+    bb["min"] = [float(tgt_min[0]), float(tgt_min[1]), float(tgt_min[2])]
+    bb["max"] = [float(tgt_max[0]), float(tgt_max[1]), float(tgt_max[2])]
     if "origin" in bb:
         del bb["origin"]
 
-    # Rescale all cuboids
-    for c in ir["program"].get("cuboids", []):
-        c["l"] = float(c["l"]) * sx
-        c["w"] = float(c["w"]) * sy
-        c["h"] = float(c["h"]) * sz
+    # Re-execute after scaling for a final report
+    exe_after = Executor(ir)
+    aft_min, aft_max, aft_ct = _executed_cuboids_aabb(exe_after)
+    if aft_ct == 0 or _math.isinf(aft_min[0]):
+        aft_min, aft_max = _overall_geom_aabb_fallback(exe_after)
+    aft_L, aft_W, aft_H = _spans_from_aabb(aft_min, aft_max)
+
+    # ------------------------ print report ------------------------
+    # print("\n[Deterministic-Scale] Target (strokes) bbox:")
+    # print(f"  min  = {_fmt3(tgt_min)}")
+    # print(f"  max  = {_fmt3(tgt_max)}")
+    # print(f"  size = (L={tgt_L:.6f}, W={tgt_W:.6f}, H={tgt_H:.6f})")
+
+    # print("[Deterministic-Scale] Executed spans BEFORE scaling (cuboids):")
+    # print(f"  min  = {_fmt3(cub_min)}")
+    # print(f"  max  = {_fmt3(cub_max)}")
+    # print(f"  size = (L={cur_L:.6f}, W={cur_W:.6f}, H={cur_H:.6f})")
+
+    # print("[Deterministic-Scale] Scale factors:")
+    # print(f"  sx={sx:.6f}, sy={sy:.6f}, sz={sz:.6f}")
+
+    # print("[Deterministic-Scale] Program (declared) bbox AFTER scaling:")
+    # print(f"  min  = {_fmt3(bb['min'])}")
+    # print(f"  max  = {_fmt3(bb['max'])}")
+    # print(f"  size = (L={bb['l']:.6f}, W={bb['w']:.6f}, H={bb['h']:.6f})")
+
+    # print("[Deterministic-Scale] Executed spans AFTER scaling (cuboids):")
+    # print(f"  min  = {_fmt3(aft_min)}")
+    # print(f"  max  = {_fmt3(aft_max)}")
+    # print(f"  size = (L={aft_L:.6f}, W={aft_W:.6f}, H={aft_H:.6f})\n")
 
     return ir
 
@@ -617,11 +783,6 @@ def main():
     # --- Step 3: deterministic translate-only instancing ---
     ir3 = deterministic_step3_translate(ir1)
     validate_ir(ir3)
-
-    # Save raw Step-3 output (before deterministic scaling)
-    out_ir3 = INPUT_DIR / "sketch_program_ir_instanced.json"
-    out_ir3.write_text(json.dumps(ir3, indent=2), encoding="utf-8")
-    print(f"✅ Wrote {out_ir3}")
 
     # --- Deterministic scaling AFTER Step-3 using strokes AABB ---
     ir_final = deterministic_scale_to_strokes_bbox(ir3, INPUT_DIR)
