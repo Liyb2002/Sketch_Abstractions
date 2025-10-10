@@ -610,14 +610,14 @@ def rescale_and_execute(input_dir: Path, ir_path) -> Executor:
     # ---- Heights (no extra execution) ----
     strokes_h = _height_from_aabb(strokes_min, strokes_max)
     cuboids_h_before, cub_count_before = _cuboids_height_from_executor(exe_before)
-    print(f"[BEFORE] heights — strokes: {strokes_h:.6f}, cuboids: {cuboids_h_before:.6f} "
-          f"(Δ={cuboids_h_before - strokes_h:.6f}, cuboids_found={cub_count_before})")
+    # print(f"[BEFORE] heights — strokes: {strokes_h:.6f}, cuboids: {cuboids_h_before:.6f} "
+    #       f"(Δ={cuboids_h_before - strokes_h:.6f}, cuboids_found={cub_count_before})")
 
     # Decide Z shift based on overall geometry (unchanged from your logic)
     dz_min = strokes_min[2] - geom_min[2]
     dz_max = strokes_max[2] - geom_max[2]
     dz = dz_min if abs(dz_min) <= abs(dz_max) else dz_max
-    print(f"Proposed Z shift dz = {dz:.6f}")
+    # print(f"Proposed Z shift dz = {dz:.6f}")
 
     # Mutate on a copy; compare to avoid unnecessary writes
     ir_mut = copy.deepcopy(ir)
@@ -650,8 +650,8 @@ def rescale_and_execute(input_dir: Path, ir_path) -> Executor:
     # ---- Heights AFTER (using the executor we already created) ----
     cuboids_h_after, cub_count_after = _cuboids_height_from_executor(exe_after)
     strokes_h_after = strokes_h  # strokes come from info.json; unchanged by IR edits
-    print(f"[AFTER ] heights — strokes: {strokes_h_after:.6f}, cuboids: {cuboids_h_after:.6f} "
-          f"(Δ={cuboids_h_after - strokes_h_after:.6f}, cuboids_found={cub_count_after})")
+    # print(f"[AFTER ] heights — strokes: {strokes_h_after:.6f}, cuboids: {cuboids_h_after:.6f} "
+    #       f"(Δ={cuboids_h_after - strokes_h_after:.6f}, cuboids_found={cub_count_after})")
 
     return exe_after
 

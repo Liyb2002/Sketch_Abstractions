@@ -7,7 +7,7 @@ import random
 # stroke types:
 # 1)Straight Line: Point_1 (3 value), Point_2 (3 value), 0, 0, 0, 1
 # 2)Cicles: Center (3 value), normal (3 value), 0, radius, 0, 2
-# 3)Cylinder face: Center (3 value), normal (3 value), height, radius, 0, 3
+# 3)Cylinder face: [lower_center(3), upper_center(3), 0.0, radius, 0.0, 3]
 # 4)Arc: Start S (3 values), End E (3 values), Center C (3 values), 4
 # 5)Spline: Control_point_1 (3 value), Control_point_2 (3 value), Control_point_3 (3 value), 5
 # 6)Sphere: center_x, center_y, center_z, axis_nx,  axis_ny,  axis_nz, 0,        radius,   0,     6
@@ -586,6 +586,79 @@ def find_planar_loops(feature_lines, global_thresh, angle_tol_deg=5.0):
 
 
 
+def find_entity_pairs(feature_lines, global_thresh):
+    """
+    Find (circle, cylinder-face) pairs under the NEW cylinder spec.
+
+    New Cylinder face (type 3):
+      [lower_center(3), upper_center(3), 0.0, radius, 0.0, 3]
+
+    Circle (type 2):
+      [cx, cy, cz, nx, ny, nz, 0, radius, 0, 2]
+
+    Relation: circle_center is within global_thresh of
+      - lower_center  OR
+      - upper_center  OR
+      - midpoint( (lower+upper)/2 )
+
+    Returns:
+      list of (i, j) with i < j, where one is a circle (2) and the other a cylinder (3).
+    """
+    thr = float(global_thresh)
+    thr2 = thr * thr
+
+    def _type_code(s):
+        return int(round(float(s[-1])))
+
+    def _dist2(ax, ay, az, bx, by, bz):
+        dx, dy, dz = ax - bx, ay - by, az - bz
+        return dx*dx + dy*dy + dz*dz
+
+    # parsers for the two types we care about
+    def _circle_center(s):
+        # [cx,cy,cz, nx,ny,nz, 0, r, 0, 2]
+        return (float(s[0]), float(s[1]), float(s[2]))
+
+    def _cylinder_lower_upper_radius(s):
+        # [lx,ly,lz, ux,uy,uz, 0.0, r, 0.0, 3]
+        lx, ly, lz = float(s[0]), float(s[1]), float(s[2])
+        ux, uy, uz = float(s[3]), float(s[4]), float(s[5])
+        r = float(s[7])
+        return (lx, ly, lz), (ux, uy, uz), r
+
+    n = len(feature_lines)
+    pairs = []
+
+    for i in range(n):
+        si = feature_lines[i]
+        ti = _type_code(si)
+        if ti not in (2, 3):
+            continue
+        for j in range(i + 1, n):
+            sj = feature_lines[j]
+            tj = _type_code(sj)
+            if {ti, tj} != {2, 3}:
+                continue
+
+            # order as (circle, cylinder)
+            if ti == 2 and tj == 3:
+                circ, cyl = si, sj
+            else:
+                circ, cyl = sj, si
+
+            cx, cy, cz = _circle_center(circ)
+            (lx, ly, lz), (ux, uy, uz), _r = _cylinder_lower_upper_radius(cyl)
+            mx, my, mz = (0.5*(lx+ux), 0.5*(ly+uy), 0.5*(lz+uz))
+
+            # within tolerance of any of the three centers
+            if _dist2(cx, cy, cz, lx, ly, lz) <= thr2 \
+               or _dist2(cx, cy, cz, ux, uy, uz) <= thr2 \
+               or _dist2(cx, cy, cz, mx, my, mz) <= thr2:
+                pairs.append((i, j))
+
+    return pairs
+
+
 def compute_global_threshold(feature_lines):
     """
     Compute global_threshold from a list of strokes (feature_lines).
@@ -814,31 +887,36 @@ def propagate_confidences_safe(
     intersect_pairs,
     perp_pairs,
     loops,
-    w_self=1.0,     # self term
-    w_inter=0.1,    # intersect relation (per-iteration total, not per-neighbor)
-    w_perp=0.1,     # perpendicular relation
-    w_loop=0.3,     # planar-loop relation
+    circle_cyl_pairs,      # NEW
+    w_self=1.0,            # self term
+    w_inter=0.1,           # intersect relation (per-iteration total, not per-neighbor)
+    w_perp=0.1,            # perpendicular relation
+    w_loop=0.3,            # planar-loop relation
+    w_circle_cyl=0.3,      # NEW: circle↔cylinder-face relation
     iters=10,
-    alpha=0.75,     # restart strength: new = (1-alpha)*C_init + alpha*mix
-    use_trust=True, # downweight neighbors with high entropy / low margin
+    alpha=0.75,            # restart strength: new = (1-alpha)*C_init + alpha*mix
+    use_trust=True,        # downweight neighbors with high entropy / low margin
 ):
     """
     Safer iterative propagation:
-      C_next = (1-alpha)*C_init + alpha * RowNormalize( w_self*C +
-                   w_inter*Avg_inter_neighbors + w_perp*Avg_perp_neighbors +
-                   w_loop*Avg_loop_neighbors )
+      C_next = (1-alpha)*C_init + alpha * RowNormalize(
+                 w_self*C
+               + w_inter      * Avg_inter_neighbors
+               + w_perp       * Avg_perp_neighbors
+               + w_loop       * Avg_loop_neighbors
+               + w_circle_cyl * Avg_circle_cyl_neighbors
+             )
 
-    - Averages over neighbors in EACH relation (degree-normalized) to prevent
-      large components from amplifying.
-    - Restarts toward C_init each iter (like PageRank with teleportation).
-    - Optional neighbor 'trust' based on label margin reduces propagation from
-      uncertain neighbors.
+    - Each relation uses a degree-normalized (average) neighbor message so big neighborhoods don't swamp others.
+    - Restart toward C_init each iter to prevent runaway drift.
+    - Optional 'trust' weighting reduces influence from uncertain neighbors.
     """
+    import numpy as np
+
     C_init = np.asarray(C_init, dtype=float)
     C = C_init.copy()
     N, K = C.shape
 
-    # ---- build neighbor lists ----
     def _build_neighbors(pairs):
         neigh = [set() for _ in range(N)]
         for a, b in pairs:
@@ -859,30 +937,28 @@ def propagate_confidences_safe(
                     loopN[u].add(v)
     loopN = [list(s) for s in loopN]
 
-    # helper: compute neighbor average with optional trust weights
+    circleCylN = _build_neighbors(circle_cyl_pairs)  # NEW
+
     def _avg_neighbors(prev, nbrs, trust=None):
         if not nbrs:
             return np.zeros(K, dtype=float)
         if trust is None:
             return np.mean(prev[nbrs, :], axis=0)
-        # weighted average by trust values (clip to [0,1])
         t = np.clip(trust[nbrs], 0.0, 1.0)
         s = t.sum()
         if s <= 0:
             return np.zeros(K, dtype=float)
-        return (prev[nbrs, :]*t[:, None]).sum(axis=0) / s
+        return (prev[nbrs, :] * t[:, None]).sum(axis=0) / s
 
     for _ in range(max(1, int(iters))):
         prev = C.copy()
 
-        # neighbor trust per node (margin between top-1 and top-2 labels)
         if use_trust and K >= 2:
-            # top and second top
             top2_idx = np.argpartition(-prev, kth=1, axis=1)[:, :2]
             row = np.arange(N)[:, None]
             top_vals = prev[row, top2_idx]
-            margins = np.abs(top_vals[:, 0] - top_vals[:, 1])  # shape (N,)
-            trust = margins  # in [0,1]; higher margin => more trusted
+            margins = np.abs(top_vals[:, 0] - top_vals[:, 1])  # (N,)
+            trust = margins
         else:
             trust = None
 
@@ -890,36 +966,29 @@ def propagate_confidences_safe(
 
         for i in range(N):
             acc = np.zeros(K, dtype=float)
-
-            # self
             acc += w_self * prev[i]
-
-            # intersect neighbors (degree-normalized)
             if interN[i]:
                 acc += w_inter * _avg_neighbors(prev, interN[i], trust)
-
-            # perpendicular neighbors
             if perpN[i]:
                 acc += w_perp * _avg_neighbors(prev, perpN[i], trust)
-
-            # loop neighbors
             if loopN[i]:
                 acc += w_loop * _avg_neighbors(prev, loopN[i], trust)
-
+            if circleCylN[i]:  # NEW
+                acc += w_circle_cyl * _avg_neighbors(prev, circleCylN[i], trust)
             mix[i] = acc
 
-        # row-normalize the mixed message
-        row_sum = mix.sum(axis=1, keepdims=True)
-        mask = row_sum[:, 0] > 0
-        mix[mask] /= row_sum[mask]
+        # row-normalize mix
+        rs = mix.sum(axis=1, keepdims=True)
+        mask = rs[:, 0] > 0
+        mix[mask] /= rs[mask]
 
-        # restart toward the original unary C_init
+        # restart toward C_init
         C = (1.0 - alpha) * C_init + alpha * mix
 
-        # final row-normalize (keeps rows summing to 1 when there is mass)
-        row_sum = C.sum(axis=1, keepdims=True)
-        mask = row_sum[:, 0] > 0
-        C[mask] /= row_sum[mask]
+        # final row-normalize
+        rs = C.sum(axis=1, keepdims=True)
+        mask = rs[:, 0] > 0
+        C[mask] /= rs[mask]
 
     return C
 
@@ -1415,7 +1484,7 @@ def visualize_strokes_by_confidence(sample_points, C, components=None, title="As
 
     for i, stroke in enumerate(sample_points):
         col = color_unassigned if labels[i] < 0 else colors[labels[i]]
-        for arr in _iter_polylines(stroke):
+        for arr in _iter_polylines(stroke):                
             if arr.shape[0] >= 2:
                 ax.plot(arr[:, 0], arr[:, 1], arr[:, 2], linewidth=1.6, alpha=0.95, color=col)
             else:

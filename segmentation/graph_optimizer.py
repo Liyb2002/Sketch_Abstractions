@@ -22,7 +22,7 @@ import graph_utils
 
 def run_once():
     input_dir = Path.cwd().parent / "input"
-    ir_path   = input_dir / "sketch_program_ir.json"
+    ir_path   = input_dir / "sketch_program_ir_editted.json"
 
     # 1) Rescale & execute (this is your "old" assembly before the edit)
     exe_old = rescale_and_execute(input_dir, ir_path)  # Executor
@@ -39,6 +39,8 @@ def run_once():
 
     loops = graph_utils.find_planar_loops(feature_lines, global_thresh, angle_tol_deg=5.0)
 
+    circle_cyl_pairs = graph_utils.find_entity_pairs(feature_lines, global_thresh)
+
     # 4) Initialize per stroke labels
     components = exe_old.primitives()  # executed cuboids (in order of execution)
     D = graph_utils.stroke_cuboid_distance_matrix(perturbed_feature_lines, components)
@@ -50,14 +52,20 @@ def run_once():
         intersect_pairs=intersect_pairs,
         perp_pairs=perp_pairs,
         loops=loops,
-        w_self=1.0, w_inter=0.1, w_perp=0.1, w_loop=0.3,
-        iters=10, alpha=0.75, use_trust=True,
+        circle_cyl_pairs=circle_cyl_pairs,  # NEW
+        w_self=1.0,
+        w_inter=0.1,
+        w_perp=0.1,
+        w_loop=0.3,
+        w_circle_cyl=3,                   # NEW
+        iters=10,
+        alpha=0.75,
+        use_trust=True,
     )
 
 
     # plot_program_only(exe_old, use_offsets=False, use_scales=False)
-    graph_utils.plot_strokes_and_program(perturbed_feature_lines, components)
-
+    # graph_utils.plot_strokes_and_program(perturbed_feature_lines, components)
 
     # 6) Visualize initial vs propagated
     graph_utils.visualize_strokes_by_confidence(
