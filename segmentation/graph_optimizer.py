@@ -45,6 +45,7 @@ def run_once():
     components = exe_old.primitives()  # executed cuboids (in order of execution)
     D = graph_utils.stroke_cuboid_distance_matrix(perturbed_feature_lines, components)
     C_init = graph_utils.distances_to_confidence(D, global_thresh)  # shape: (num_strokes, num_cuboids)
+    anchor_idx_per_comp, anchor_mask = graph_utils.best_stroke_for_each_component(C_init, D)
 
     # 5) Propagate confidences (safer)
     C = graph_utils.propagate_confidences_safe(
@@ -52,15 +53,16 @@ def run_once():
         intersect_pairs=intersect_pairs,
         perp_pairs=perp_pairs,
         loops=loops,
-        circle_cyl_pairs=circle_cyl_pairs,  # NEW
+        circle_cyl_pairs=circle_cyl_pairs,
         w_self=1.0,
         w_inter=0.1,
         w_perp=0.1,
-        w_loop=0.3,
-        w_circle_cyl=3,                   # NEW
+        w_loop=1,
+        w_circle_cyl=1,
         iters=10,
         alpha=0.75,
         use_trust=True,
+        anchor_mask=anchor_mask,  # <-- freeze these rows
     )
 
 

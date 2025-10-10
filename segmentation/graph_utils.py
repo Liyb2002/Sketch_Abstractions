@@ -882,35 +882,88 @@ def print_confidence_preview(C, D, components, global_thresh, top_k=3, max_rows=
 # ========================================================================================== #
 
 
+def best_stroke_for_each_component(C_init, D=None):
+    """
+    Select one UNIQUE anchor stroke per component (column).
+    Preference: highest confidence in C_init; tie-break by smaller distance D.
+
+    Args:
+      C_init : (N x K) initial confidences
+      D      : optional (N x K) distances; used only for tie-breaks and
+               as a fallback when a component has all equal confidences.
+
+    Returns:
+      anchor_idx_per_comp : list[int] length K; -1 if no feasible stroke
+      anchor_mask         : (N,) bool array; True where the stroke is an anchor
+    """
+    import numpy as np
+
+    C = np.asarray(C_init, dtype=float)
+    N, K = C.shape
+    D = np.asarray(D, dtype=float) if D is not None else None
+
+    # Build candidate list of (score, -distance, stroke_i, comp_k) pairs
+    # Use -distance so that smaller distance sorts earlier.
+    candidates = []
+    for k in range(K):
+        for i in range(N):
+            score = C[i, k]
+            if not np.isfinite(score):
+                continue
+            if D is not None and np.isfinite(D[i, k]):
+                dist_key = -float(D[i, k])
+            else:
+                dist_key = -1e9  # neutral tie-break if no D
+            candidates.append((float(score), dist_key, i, k))
+
+    # If there are no candidates at all, return empty anchors
+    if not candidates:
+        return [-1] * K, np.zeros((N,), dtype=bool)
+
+    # Sort by score desc, then by distance asc (since we negated it)
+    candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
+
+    anchor_idx_per_comp = [-1] * K
+    stroke_used = np.zeros((N,), dtype=bool)
+    comps_assigned = 0
+
+    for score, _negdist, i, k in candidates:
+        if anchor_idx_per_comp[k] != -1:
+            continue
+        if stroke_used[i]:
+            continue
+        anchor_idx_per_comp[k] = i
+        stroke_used[i] = True
+        comps_assigned += 1
+        if comps_assigned == K:
+            break
+
+    # Build mask
+    anchor_mask = np.zeros((N,), dtype=bool)
+    for idx in anchor_idx_per_comp:
+        if idx >= 0:
+            anchor_mask[idx] = True
+
+    return anchor_idx_per_comp, anchor_mask
+
+
+
 def propagate_confidences_safe(
     C_init,
     intersect_pairs,
     perp_pairs,
     loops,
-    circle_cyl_pairs,      # NEW
-    w_self=1.0,            # self term
-    w_inter=0.1,           # intersect relation (per-iteration total, not per-neighbor)
-    w_perp=0.1,            # perpendicular relation
-    w_loop=0.3,            # planar-loop relation
-    w_circle_cyl=0.3,      # NEW: circle↔cylinder-face relation
+    circle_cyl_pairs,
+    w_self=1.0,
+    w_inter=0.1,
+    w_perp=0.1,
+    w_loop=0.3,
+    w_circle_cyl=0.3,
     iters=10,
-    alpha=0.75,            # restart strength: new = (1-alpha)*C_init + alpha*mix
-    use_trust=True,        # downweight neighbors with high entropy / low margin
+    alpha=0.75,
+    use_trust=True,
+    anchor_mask=None,   # NEW: True for rows to freeze
 ):
-    """
-    Safer iterative propagation:
-      C_next = (1-alpha)*C_init + alpha * RowNormalize(
-                 w_self*C
-               + w_inter      * Avg_inter_neighbors
-               + w_perp       * Avg_perp_neighbors
-               + w_loop       * Avg_loop_neighbors
-               + w_circle_cyl * Avg_circle_cyl_neighbors
-             )
-
-    - Each relation uses a degree-normalized (average) neighbor message so big neighborhoods don't swamp others.
-    - Restart toward C_init each iter to prevent runaway drift.
-    - Optional 'trust' weighting reduces influence from uncertain neighbors.
-    """
     import numpy as np
 
     C_init = np.asarray(C_init, dtype=float)
@@ -937,7 +990,7 @@ def propagate_confidences_safe(
                     loopN[u].add(v)
     loopN = [list(s) for s in loopN]
 
-    circleCylN = _build_neighbors(circle_cyl_pairs)  # NEW
+    circleCylN = _build_neighbors(circle_cyl_pairs)
 
     def _avg_neighbors(prev, nbrs, trust=None):
         if not nbrs:
@@ -949,6 +1002,13 @@ def propagate_confidences_safe(
         if s <= 0:
             return np.zeros(K, dtype=float)
         return (prev[nbrs, :] * t[:, None]).sum(axis=0) / s
+
+    if anchor_mask is None:
+        anchor_mask = np.zeros((N,), dtype=bool)
+    else:
+        anchor_mask = np.asarray(anchor_mask, dtype=bool)
+        if anchor_mask.shape != (N,):
+            raise ValueError("anchor_mask must have shape (num_strokes,)")
 
     for _ in range(max(1, int(iters))):
         prev = C.copy()
@@ -965,6 +1025,11 @@ def propagate_confidences_safe(
         mix = np.zeros_like(prev)
 
         for i in range(N):
+            if anchor_mask[i]:
+                # Anchor row: keep exactly C_init (we still let it influence others via prev)
+                mix[i] = C_init[i]
+                continue
+
             acc = np.zeros(K, dtype=float)
             acc += w_self * prev[i]
             if interN[i]:
@@ -973,22 +1038,26 @@ def propagate_confidences_safe(
                 acc += w_perp * _avg_neighbors(prev, perpN[i], trust)
             if loopN[i]:
                 acc += w_loop * _avg_neighbors(prev, loopN[i], trust)
-            if circleCylN[i]:  # NEW
+            if circleCylN[i]:
                 acc += w_circle_cyl * _avg_neighbors(prev, circleCylN[i], trust)
+
             mix[i] = acc
 
-        # row-normalize mix
+        # Row-normalize mix
         rs = mix.sum(axis=1, keepdims=True)
-        mask = rs[:, 0] > 0
-        mix[mask] /= rs[mask]
+        m = rs[:, 0] > 0
+        mix[m] /= rs[m]
 
-        # restart toward C_init
+        # Restart toward C_init
         C = (1.0 - alpha) * C_init + alpha * mix
 
-        # final row-normalize
+        # Freeze anchors exactly to C_init after restart, then normalize rows
+        if anchor_mask.any():
+            C[anchor_mask] = C_init[anchor_mask]
+
         rs = C.sum(axis=1, keepdims=True)
-        mask = rs[:, 0] > 0
-        C[mask] /= rs[mask]
+        m = rs[:, 0] > 0
+        C[m] /= rs[m]
 
     return C
 
