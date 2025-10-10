@@ -962,20 +962,18 @@ def propagate_confidences_safe(
     iters=10,
     alpha=0.75,
     use_trust=True,
-    anchor_mask=None,   # NEW: True for rows to freeze
+    anchor_mask=None,   # rows to keep fixed (already one-hot)
 ):
     import numpy as np
 
-    C_init = np.asarray(C_init, dtype=float)
-    C = C_init.copy()
+    C = np.asarray(C_init, dtype=float).copy()
     N, K = C.shape
 
     def _build_neighbors(pairs):
         neigh = [set() for _ in range(N)]
         for a, b in pairs:
             if 0 <= a < N and 0 <= b < N and a != b:
-                neigh[a].add(b)
-                neigh[b].add(a)
+                neigh[a].add(b); neigh[b].add(a)
         return [list(s) for s in neigh]
 
     interN = _build_neighbors(intersect_pairs)
@@ -1007,18 +1005,16 @@ def propagate_confidences_safe(
         anchor_mask = np.zeros((N,), dtype=bool)
     else:
         anchor_mask = np.asarray(anchor_mask, dtype=bool)
-        if anchor_mask.shape != (N,):
-            raise ValueError("anchor_mask must have shape (num_strokes,)")
 
     for _ in range(max(1, int(iters))):
         prev = C.copy()
 
+        # neighbor trust (margin top1 - top2); optional
         if use_trust and K >= 2:
             top2_idx = np.argpartition(-prev, kth=1, axis=1)[:, :2]
             row = np.arange(N)[:, None]
             top_vals = prev[row, top2_idx]
-            margins = np.abs(top_vals[:, 0] - top_vals[:, 1])  # (N,)
-            trust = margins
+            trust = np.abs(top_vals[:, 0] - top_vals[:, 1])
         else:
             trust = None
 
@@ -1026,8 +1022,8 @@ def propagate_confidences_safe(
 
         for i in range(N):
             if anchor_mask[i]:
-                # Anchor row: keep exactly C_init (we still let it influence others via prev)
-                mix[i] = C_init[i]
+                # DO NOT change anchors; keep their current (one-hot) row.
+                mix[i] = prev[i]
                 continue
 
             acc = np.zeros(K, dtype=float)
@@ -1043,23 +1039,49 @@ def propagate_confidences_safe(
 
             mix[i] = acc
 
-        # Row-normalize mix
+        # Row-normalize mix (non-anchors only)
         rs = mix.sum(axis=1, keepdims=True)
-        m = rs[:, 0] > 0
-        mix[m] /= rs[m]
+        non_anchor = ~anchor_mask
+        mask_rows = (rs[:, 0] > 0) & non_anchor
+        mix[mask_rows] /= rs[mask_rows]
 
-        # Restart toward C_init
-        C = (1.0 - alpha) * C_init + alpha * mix
+        # Restart toward C_init (non-anchors only)
+        C[non_anchor] = (1.0 - alpha) * C_init[non_anchor] + alpha * mix[non_anchor]
 
-        # Freeze anchors exactly to C_init after restart, then normalize rows
-        if anchor_mask.any():
-            C[anchor_mask] = C_init[anchor_mask]
-
+        # Final row-normalize (non-anchors only)
         rs = C.sum(axis=1, keepdims=True)
-        m = rs[:, 0] > 0
-        C[m] /= rs[m]
+        mask_rows = (rs[:, 0] > 0) & non_anchor
+        C[mask_rows] /= rs[mask_rows]
+        # Anchors remain untouched
 
     return C
+
+
+
+def make_anchor_onehots(C_init, anchor_idx_per_comp):
+    """
+    Force anchor strokes to be one-hot on their component (once).
+    Returns:
+      C0        : C_init copy with anchors set to one-hot
+      mask      : (N,) bool True at anchor rows
+      onehots   : (N x K) one-hot rows (zero elsewhere) for convenience
+    """
+    import numpy as np
+    C_init = np.asarray(C_init, dtype=float)
+    N, K = C_init.shape
+    C0 = C_init.copy()
+    mask = np.zeros((N,), dtype=bool)
+    onehots = np.zeros_like(C0)
+
+    for k, i in enumerate(anchor_idx_per_comp):
+        if i is None or i < 0 or i >= N:
+            continue
+        mask[i] = True
+        onehots[i, k] = 1.0
+        C0[i, :] = 0.0
+        C0[i, k] = 1.0
+
+    return C0, mask, onehots
 
 
 

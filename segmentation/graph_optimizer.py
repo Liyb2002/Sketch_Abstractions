@@ -45,7 +45,12 @@ def run_once():
     components = exe_old.primitives()  # executed cuboids (in order of execution)
     D = graph_utils.stroke_cuboid_distance_matrix(perturbed_feature_lines, components)
     C_init = graph_utils.distances_to_confidence(D, global_thresh)  # shape: (num_strokes, num_cuboids)
-    anchor_idx_per_comp, anchor_mask = graph_utils.best_stroke_for_each_component(C_init, D)
+
+
+    # 4.1) Choose anchors and make them one-hot once
+    anchor_idx_per_comp, _ = graph_utils.best_stroke_for_each_component(C_init, D)
+    C_init_anchored, anchor_mask, _ = graph_utils.make_anchor_onehots(C_init, anchor_idx_per_comp)
+
 
     # 5) Propagate confidences (safer)
     C = graph_utils.propagate_confidences_safe(
@@ -58,7 +63,7 @@ def run_once():
         w_inter=0.1,
         w_perp=0.1,
         w_loop=1,
-        w_circle_cyl=1,
+        w_circle_cyl=100,
         iters=10,
         alpha=0.75,
         use_trust=True,
@@ -70,9 +75,11 @@ def run_once():
     # graph_utils.plot_strokes_and_program(perturbed_feature_lines, components)
 
     # 6) Visualize initial vs propagated
-    graph_utils.visualize_strokes_by_confidence(
-        perturbed_feature_lines, C_init, components, title="Initial (from distances)"
-    )
+    # graph_utils.visualize_strokes_by_confidence(
+    #     perturbed_feature_lines, C_init, components, title="Initial (from distances)"
+    # )
+
+    
     graph_utils.visualize_strokes_by_confidence(
         perturbed_feature_lines, C, components, title="After propagation"
     )
