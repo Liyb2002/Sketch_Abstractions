@@ -4,77 +4,86 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Line, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
 
-// --------- existing strokes fetch ----------
-async function loadFromAPI(url = "/api/strokes") {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to load ${url}: ${res.status}`);
+// ---------- API helpers ----------
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`${opts?.method || "GET"} ${url} -> ${res.status}`);
   return await res.json();
 }
+const loadStrokes = () => fetchJSON("/api/strokes");
+const loadCuboidsDefault = async ({ use_offsets = true, use_scales = false } = {}) => {
+  const qs = `?use_offsets=${String(use_offsets)}&use_scales=${String(use_scales)}`;
+  return fetchJSON(`/api/execute-default${qs}`, { method: "POST" });
+};
 
-// --------- simple HUD to execute the program ----------
-function ProgramLoader({ onCuboids }) {
-  // This is the line you asked about — it's here:
-  const runDefault = async () => {
-    const res = await fetch(`/api/execute-default?use_offsets=true&use_scales=false`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error("execute-default failed", res.status);
-      return;
-    }
-    const json = await res.json(); // { cuboids: [...] }
-    onCuboids(json.cuboids || []);
-  };
-
-  return (
-    <div style={{
-      position: "absolute", zIndex: 10, left: 12, top: 12,
-      background: "#fff", border: "1px solid #e5e7eb",
-      borderRadius: 8, padding: 8
-    }}>
-      <div style={{ fontSize: 12, marginBottom: 6 }}>Program</div>
-      <button onClick={runDefault} style={{ fontSize: 12, padding: "4px 8px" }}>
-        Run default (offsets on)
-      </button>
-    </div>
-  );
-}
-
-// --------- strokes renderer (unchanged) ----------
-function PolylineGroup({ polylines, color = "#111827", lineWidth = 1.6 }) {
+// ---------- strokes renderer ----------
+function PolylineGroup({ polylines, color = "#111827", lineWidth = 2.0 }) {
   if (!polylines?.length) return null;
   return (
     <group>
       {polylines.map((pl, i) =>
         pl.points?.length >= 2 ? (
-          <Line key={i} points={pl.points} color={color} lineWidth={lineWidth} />
+          <Line key={i} points={pl.points} color={color} lineWidth={lineWidth} transparent={false} />
         ) : null
       )}
     </group>
   );
 }
 
-// --------- cuboids renderer (center + size, axis-aligned) ----------
-function CuboidGroup({ cuboids }) {
+// ---------- cuboids as edge-only thick lines (no meshes) ----------
+const EDGE_IDX = [
+  [0,1],[1,2],[2,3],[3,0], // bottom
+  [4,5],[5,6],[6,7],[7,4], // top
+  [0,4],[1,5],[2,6],[3,7], // verticals
+];
+
+function cuboidCorners(center, size, rotationEuler) {
+  const [cx, cy, cz] = center;
+  const [L, W, H] = size;
+  const hx = L / 2, hy = W / 2, hz = H / 2;
+
+  const corners = [
+    [-hx, -hy, -hz], [ hx, -hy, -hz],
+    [ hx,  hy, -hz], [-hx,  hy, -hz],
+    [-hx, -hy,  hz], [ hx, -hy,  hz],
+    [ hx,  hy,  hz], [-hx,  hy,  hz],
+  ].map(([x, y, z]) => new THREE.Vector3(x, y, z));
+
+  if (rotationEuler?.length === 3) {
+    const e = new THREE.Euler(rotationEuler[0], rotationEuler[1], rotationEuler[2]);
+    const m = new THREE.Matrix4().makeRotationFromEuler(e);
+    corners.forEach(v => v.applyMatrix4(m));
+  }
+  corners.forEach(v => v.add(new THREE.Vector3(cx, cy, cz)));
+  return corners;
+}
+
+function CuboidEdges({ cuboids, color = "#111827", lineWidth = 3.0 }) {
   if (!cuboids?.length) return null;
   return (
     <group>
-      {cuboids.map((c) => {
-        const rot = c.rotationEuler || [0, 0, 0]; // None from server for now
-        return (
-          <group key={c.id} position={c.center} rotation={rot}>
-            <mesh>
-              <boxGeometry args={c.size} />
-              <meshBasicMaterial wireframe />
-            </mesh>
-          </group>
-        );
+      {cuboids.flatMap((c) => {
+        const corners = cuboidCorners(c.center, c.size, c.rotationEuler);
+        return EDGE_IDX.map(([a, b], i) => (
+          <Line
+            key={`${c.id}-${i}`}
+            points={[
+              [corners[a].x, corners[a].y, corners[a].z],
+              [corners[b].x, corners[b].y, corners[b].z],
+            ]}
+            color={color}
+            lineWidth={lineWidth}
+            transparent={false}
+            dashed={false}
+            depthTest={true}
+          />
+        ));
       })}
     </group>
   );
 }
 
-// --------- helpers to compute a side-by-side offset ----------
+// ---------- layout helpers (place cuboids beside strokes) ----------
 function bboxOfPolylines(polys) {
   const box = new THREE.Box3();
   for (const pl of polys) for (const p of pl.points ?? []) {
@@ -112,39 +121,53 @@ function separationOffset(strokePolys, cuboids, marginFrac = 0.15) {
 }
 
 export default function App() {
-  const [data, setData] = useState({
+  const [strokes, setStrokes] = useState({
     perturbed_feature_lines: [],
     perturbed_construction_lines: [],
     feature_lines: [],
   });
   const [cuboids, setCuboids] = useState([]);
 
+  // Auto-load both on mount
   useEffect(() => {
-    loadFromAPI().then(setData).catch(console.error);
+    (async () => {
+      try {
+        const [s, c] = await Promise.all([
+          loadStrokes(),
+          loadCuboidsDefault({ use_offsets: true, use_scales: false }),
+        ]);
+        setStrokes(s);
+        setCuboids(c.cuboids || []);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
   }, []);
 
-  // Z-up: rotate world (Three is Y-up)
+  // Z-up (Three is Y-up by default)
   const zUpRotation = useMemo(() => new THREE.Euler(-Math.PI / 2, 0, 0), []);
 
-  // Compute offset so cuboids render beside strokes
+  // Non-overlap offset
   const offsetVec = useMemo(
-    () => separationOffset(data.perturbed_feature_lines, cuboids),
-    [data.perturbed_feature_lines, cuboids]
+    () => separationOffset(strokes.perturbed_feature_lines, cuboids),
+    [strokes.perturbed_feature_lines, cuboids]
   );
 
-  // Camera fit over both strokes and (offset) cuboids
+  // Camera fit over strokes + (offset) cuboids
   useEffect(() => {
     const cam = window.__r3f?.store.getState().camera;
     if (!cam) return;
 
     const box = new THREE.Box3();
 
-    // strokes contribution
-    for (const pl of data.perturbed_feature_lines) {
-      for (const p of pl.points ?? []) box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
+    // strokes
+    for (const pl of strokes.perturbed_feature_lines) {
+      for (const p of pl.points ?? []) {
+        box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
+      }
     }
 
-    // cuboids contribution (with offset)
+    // cuboids (apply offset)
     const tmp = new THREE.Box3();
     for (const c of cuboids) {
       const [L, W, H] = c.size;
@@ -166,15 +189,12 @@ export default function App() {
     cam.far = Math.max(1000, maxSize * 1000);
     cam.lookAt(center);
     cam.updateProjectionMatrix();
-  }, [data.perturbed_feature_lines, cuboids, offsetVec]);
+  }, [strokes.perturbed_feature_lines, cuboids, offsetVec]);
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#f8fafc" }}>
-      {/* Button to call /api/execute-default?use_offsets=true&use_scales=false */}
-      <ProgramLoader onCuboids={setCuboids} />
-
+    <div style={{ width: "100vw", height: "100vh", background: "#ffffff" }}>
       <Canvas camera={{ fov: 45 }}>
-        <color attach="background" args={["#f8fafc"]} />
+        <color attach="background" args={["#ffffff"]} />
         <Suspense fallback={null}>
           <ambientLight intensity={0.7} />
           <directionalLight position={[5, 5, 10]} intensity={0.7} />
@@ -182,13 +202,16 @@ export default function App() {
 
           {/* Z-up world */}
           <group rotation={zUpRotation}>
-            {/* strokes (left) */}
-            <PolylineGroup polylines={data.perturbed_feature_lines} color="#111827" lineWidth={1.6} />
+            {/* Strokes (left) */}
+            <PolylineGroup polylines={strokes.perturbed_feature_lines} color="#111827" lineWidth={2.4} />
 
-            {/* cuboids (shifted to the right by offsetVec) */}
+            {/* Cuboids (edge-only, shifted to the right) */}
             <group position={[offsetVec.x, offsetVec.y, offsetVec.z]}>
-              <CuboidGroup cuboids={cuboids} />
+              <CuboidEdges cuboids={cuboids} color="#111827" lineWidth={3.0} />
             </group>
+
+            {/* Remove this line too if you want ZERO helpers */}
+            <axesHelper args={[2]} />
           </group>
 
           <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
