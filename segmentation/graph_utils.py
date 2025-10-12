@@ -1634,6 +1634,84 @@ def visualize_strokes_by_confidence(sample_points, C, components=None, title="As
 
 
 
+def visualize_anchors(sample_points, anchor_mask, title="Anchors (red)"):
+    """
+    Show anchored strokes in red, others in black. Works with:
+      - stroke = [(x,y,z), ...]   OR
+      - stroke = [ [(x,y,z),...], [(x,y,z),...], ... ]
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    sample_points = sample_points or []
+    anchor_mask = np.asarray(anchor_mask, dtype=bool)
+    N = len(sample_points)
+    if anchor_mask.shape != (N,):
+        raise ValueError("anchor_mask must have shape (num_strokes,)")
+
+    def _iter_polylines(pts):
+        if not pts: return
+        first = pts[0] if isinstance(pts, (list, tuple)) and pts else None
+        if isinstance(first, (list, tuple)) and len(first) == 3:
+            arr = np.asarray(pts, dtype=float).reshape(-1, 3)
+            if arr.size: yield arr
+        else:
+            for seg in pts:
+                if not seg: continue
+                arr = np.asarray(seg, dtype=float).reshape(-1, 3)
+                if arr.size: yield arr
+
+    mins = np.array([np.inf, np.inf, np.inf], dtype=float)
+    maxs = -mins
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    if title: ax.set_title(title)
+
+    col_anchor = (1.0, 0.0, 0.0, 1.0)   # red
+    col_other  = (0.0, 0.0, 0.0, 1.0)   # black
+
+    # Draw: anchors on top for visibility (draw others first)
+    order = list(range(N))
+    others = [i for i in order if not anchor_mask[i]]
+    anchors = [i for i in order if anchor_mask[i]]
+
+    for group, color, lw in ((others, col_other, 1.0), (anchors, col_anchor, 1.6)):
+        for i in group:
+            for arr in _iter_polylines(sample_points[i]):
+                if arr.shape[0] >= 2:
+                    ax.plot(arr[:,0], arr[:,1], arr[:,2], color=color, linewidth=lw, alpha=0.95)
+                else:
+                    ax.scatter(arr[:,0], arr[:,1], arr[:,2], s=10 if anchor_mask[i] else 6, color=color, alpha=0.95)
+                mins = np.minimum(mins, arr.min(axis=0))
+                maxs = np.maximum(maxs, arr.max(axis=0))
+
+    # Equal aspect box
+    if np.all(np.isfinite(mins)) and np.all(np.isfinite(maxs)):
+        span = (maxs - mins)
+        r = span.max() if span.max() > 0 else 1.0
+        c = (maxs + mins) / 2.0
+        ax.set_xlim(c[0]-r/2, c[0]+r/2)
+        ax.set_ylim(c[1]-r/2, c[1]+r/2)
+        ax.set_zlim(c[2]-r/2, c[2]+r/2)
+
+    # Hide grid/axes/ticks
+    try: ax.set_axis_off()
+    except Exception: pass
+    ax.grid(False)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        try:
+            axis.set_ticks([]); axis.set_ticklabels([])
+            pane = getattr(axis, "pane", None)
+            if pane is not None:
+                pane.set_edgecolor((1,1,1,0)); pane.set_alpha(0.0)
+        except Exception: pass
+
+    plt.tight_layout()
+    plt.show()
+
+
+
 def plot_strokes_and_program(sample_points, components, title=None):
     """
     Minimal 3D viz: strokes (black) + cuboids (thin blue), no labels/legend/axes.

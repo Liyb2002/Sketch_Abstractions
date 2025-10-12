@@ -51,6 +51,9 @@ def run_once():
     anchor_idx_per_comp, _ = graph_utils.best_stroke_for_each_component(C_init, D)
     C_init_anchored, anchor_mask, _ = graph_utils.make_anchor_onehots(C_init, anchor_idx_per_comp)
 
+    # graph_utils.visualize_anchors(perturbed_feature_lines, anchor_mask, title="Anchors (red) & Other Strokes (black)")
+
+
 
     # 5) Propagate confidences (safer)
     C = graph_utils.propagate_confidences_safe(
