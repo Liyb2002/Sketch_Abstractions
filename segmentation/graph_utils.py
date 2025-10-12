@@ -586,11 +586,11 @@ def find_planar_loops(feature_lines, global_thresh, angle_tol_deg=5.0):
 
 
 
-def find_entity_pairs(feature_lines, global_thresh):
+def find_entity_pairs(feature_lines, global_thresh, radius_tol=1e-6):
     """
     Find (circle, cylinder-face) pairs under the NEW cylinder spec.
 
-    New Cylinder face (type 3):
+    Cylinder face (type 3):
       [lower_center(3), upper_center(3), 0.0, radius, 0.0, 3]
 
     Circle (type 2):
@@ -601,6 +601,8 @@ def find_entity_pairs(feature_lines, global_thresh):
       - upper_center  OR
       - midpoint( (lower+upper)/2 )
 
+    AND circle.radius ≈ cylinder.radius (within radius_tol)
+
     Returns:
       list of (i, j) with i < j, where one is a circle (2) and the other a cylinder (3).
     """
@@ -608,19 +610,18 @@ def find_entity_pairs(feature_lines, global_thresh):
     thr2 = thr * thr
 
     def _type_code(s):
-        return int(round(float(s[-1])))
+        return int(float(s[-1]))
 
     def _dist2(ax, ay, az, bx, by, bz):
         dx, dy, dz = ax - bx, ay - by, az - bz
         return dx*dx + dy*dy + dz*dz
 
-    # parsers for the two types we care about
-    def _circle_center(s):
-        # [cx,cy,cz, nx,ny,nz, 0, r, 0, 2]
-        return (float(s[0]), float(s[1]), float(s[2]))
+    def _circle_center_and_radius(s):
+        # [cx, cy, cz, nx, ny, nz, 0, r, 0, 2]
+        return (float(s[0]), float(s[1]), float(s[2])), float(s[7])
 
     def _cylinder_lower_upper_radius(s):
-        # [lx,ly,lz, ux,uy,uz, 0.0, r, 0.0, 3]
+        # [lx, ly, lz, ux, uy, uz, 0.0, r, 0.0, 3]
         lx, ly, lz = float(s[0]), float(s[1]), float(s[2])
         ux, uy, uz = float(s[3]), float(s[4]), float(s[5])
         r = float(s[7])
@@ -646,14 +647,18 @@ def find_entity_pairs(feature_lines, global_thresh):
             else:
                 circ, cyl = sj, si
 
-            cx, cy, cz = _circle_center(circ)
-            (lx, ly, lz), (ux, uy, uz), _r = _cylinder_lower_upper_radius(cyl)
-            mx, my, mz = (0.5*(lx+ux), 0.5*(ly+uy), 0.5*(lz+uz))
+            (cx, cy, cz), rc = _circle_center_and_radius(circ)
+            (lx, ly, lz), (ux, uy, uz), rCyl = _cylinder_lower_upper_radius(cyl)
 
-            # within tolerance of any of the three centers
-            if _dist2(cx, cy, cz, lx, ly, lz) <= thr2 \
-               or _dist2(cx, cy, cz, ux, uy, uz) <= thr2 \
-               or _dist2(cx, cy, cz, mx, my, mz) <= thr2:
+            # Radii must match within tolerance
+            if abs(rc - rCyl) > radius_tol:
+                continue
+
+            # Check proximity of centers
+            mx, my, mz = (0.5*(lx + ux), 0.5*(ly + uy), 0.5*(lz + uz))
+            if (_dist2(cx, cy, cz, lx, ly, lz) <= thr2
+                or _dist2(cx, cy, cz, ux, uy, uz) <= thr2
+                or _dist2(cx, cy, cz, mx, my, mz) <= thr2):
                 pairs.append((i, j))
 
     return pairs
@@ -962,18 +967,20 @@ def propagate_confidences_safe(
     iters=10,
     alpha=0.75,
     use_trust=True,
-    anchor_mask=None,   # rows to keep fixed (already one-hot)
+    anchor_mask=None,   # rows to keep fixed (already one-hot if you used make_c_init_simple/make_anchor_onehots)
 ):
     import numpy as np
 
     C = np.asarray(C_init, dtype=float).copy()
     N, K = C.shape
 
+    # ---------- neighbor builders ----------
     def _build_neighbors(pairs):
         neigh = [set() for _ in range(N)]
         for a, b in pairs:
             if 0 <= a < N and 0 <= b < N and a != b:
-                neigh[a].add(b); neigh[b].add(a)
+                neigh[a].add(b)
+                neigh[b].add(a)
         return [list(s) for s in neigh]
 
     interN = _build_neighbors(intersect_pairs)
@@ -990,6 +997,7 @@ def propagate_confidences_safe(
 
     circleCylN = _build_neighbors(circle_cyl_pairs)
 
+    # ---------- averaging helper ----------
     def _avg_neighbors(prev, nbrs, trust=None):
         if not nbrs:
             return np.zeros(K, dtype=float)
@@ -1001,15 +1009,19 @@ def propagate_confidences_safe(
             return np.zeros(K, dtype=float)
         return (prev[nbrs, :] * t[:, None]).sum(axis=0) / s
 
+    # ---------- anchors mask ----------
     if anchor_mask is None:
         anchor_mask = np.zeros((N,), dtype=bool)
     else:
         anchor_mask = np.asarray(anchor_mask, dtype=bool)
+        if anchor_mask.shape != (N,):
+            raise ValueError("anchor_mask must have shape (num_strokes,)")
 
+    # ---------- iterations ----------
     for _ in range(max(1, int(iters))):
         prev = C.copy()
 
-        # neighbor trust (margin top1 - top2); optional
+        # neighbor trust (margin top1 - top2)
         if use_trust and K >= 2:
             top2_idx = np.argpartition(-prev, kth=1, axis=1)[:, :2]
             row = np.arange(N)[:, None]
@@ -1022,7 +1034,7 @@ def propagate_confidences_safe(
 
         for i in range(N):
             if anchor_mask[i]:
-                # DO NOT change anchors; keep their current (one-hot) row.
+                # Keep anchors as-is; they still influence neighbors via 'prev'
                 mix[i] = prev[i]
                 continue
 
@@ -1057,7 +1069,6 @@ def propagate_confidences_safe(
     return C
 
 
-
 def make_anchor_onehots(C_init, anchor_idx_per_comp):
     """
     Force anchor strokes to be one-hot on their component (once).
@@ -1085,6 +1096,42 @@ def make_anchor_onehots(C_init, anchor_idx_per_comp):
 
 
 
+
+
+# ====================================DEBUG FUNCTIONS====================================================== #
+
+
+def make_c_init_simple(anchor_idx_per_comp, num_strokes, num_cuboids):
+    """
+    Build a simple seed confidence matrix:
+      - Anchor strokes are 1 on their component and 0 elsewhere (one-hot).
+      - All non-anchors are all zeros.
+
+    Args:
+      anchor_idx_per_comp : list[int] length = num_cuboids (stroke index per component, -1 if none)
+      num_strokes         : N
+      num_cuboids         : K
+
+    Returns:
+      C_simple   : (N x K) float array
+      anchor_mask: (N,) bool array (True at anchor rows)
+      anchor_rows: (N x K) float array (one-hot rows for anchors; zeros elsewhere)
+    """
+    import numpy as np
+
+    N, K = int(num_strokes), int(num_cuboids)
+    C_simple   = np.zeros((N, K), dtype=float)
+    anchor_mask = np.zeros((N,), dtype=bool)
+    anchor_rows = np.zeros((N, K), dtype=float)
+
+    for k, i in enumerate(anchor_idx_per_comp):
+        if i is None or i < 0 or i >= N:
+            continue
+        anchor_mask[i] = True
+        C_simple[i, k]  = 1.0
+        anchor_rows[i, k] = 1.0
+
+    return C_simple, anchor_mask, anchor_rows
 
 # ========================================================================================== #
 
