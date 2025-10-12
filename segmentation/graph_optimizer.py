@@ -50,7 +50,8 @@ def run_once():
     # 4.1) Choose anchors and make them one-hot once
     anchor_idx_per_comp, _ = graph_utils.best_stroke_for_each_component(C_init, D)
     C_init_anchored, anchor_mask, _ = graph_utils.make_anchor_onehots(C_init, anchor_idx_per_comp)
-    graph_utils.visualize_anchors(perturbed_feature_lines, anchor_mask, title="Anchors (red) & Other Strokes (black)")
+    C_init_down, anchor_mask = graph_utils.make_c_down_weight(C_init, anchor_idx_per_comp, scale=0.1)
+    # graph_utils.visualize_anchors(perturbed_feature_lines, anchor_mask, title="Anchors (red) & Other Strokes (black)")
 
 
     C_init_simple, anchor_mask, anchor_rows = graph_utils.make_c_init_simple(
@@ -63,17 +64,17 @@ def run_once():
 
     # 5) Propagate confidences (safer)
     C = graph_utils.propagate_confidences_safe(
-        C_init=C_init_simple,
+        C_init=C_init_down,
         intersect_pairs=intersect_pairs,
         perp_pairs=perp_pairs,
         loops=loops,
         circle_cyl_pairs=circle_cyl_pairs,
-        w_self=1.0,
-        w_inter=0.0,
-        w_perp=0.0,
-        w_loop=0.0,
-        w_circle_cyl=10,
-        iters=10,
+        w_self=0.5,
+        w_inter=0.1,
+        w_perp=0.1,
+        w_loop=0.5,
+        w_circle_cyl=0.5,
+        iters=200,
         alpha=0.75,
         use_trust=True,
         anchor_mask=anchor_mask,   # <-- only this

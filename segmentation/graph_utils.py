@@ -117,21 +117,36 @@ def intersection_pairs(sample_points, feature_lines, global_thresh):
 
 
 
-def perpendicular_pairs(feature_lines, global_thresh):
+def perpendicular_pairs(feature_lines, global_thresh, *, radius_tol=1e-6):
     """
-    Detect perpendicular relationships per your simplified rules:
+    Detect perpendicular / matching relationships per simplified rules.
 
-    1) line-line : angle in [85°, 95°]  (|dot| <= cos 85°)
-    2) line-circle : min endpoint distance to circle center is ~ on the circle:
-         abs(dist(P_end, C_circle) - R_circle) < global_thresh
-    3) line-sphere : same as line-circle but with sphere center/radius
-    4) circle-cylinder : centers coincide within global_thresh, OR
-         |C_circle - (C_cyl + H*n)| <= global_thresh, OR
-         |C_circle - (C_cyl - H*n)| <= global_thresh
-       (n is the normalized cylinder normal)
+    Type specs:
+      1) Line:
+         [x1,y1,z1, x2,y2,z2, 0,0,0, 1]
+
+      2) Circle:
+         [cx,cy,cz, nx,ny,nz, 0, radius, 0, 2]
+
+      3) Cylinder face (CORRECTED):
+         [lx,ly,lz, ux,uy,uz, 0.0, radius, 0.0, 3]
+         where lower/upper are centers of the two end caps.
+         Cylinder "center" is the midpoint: (lower + upper)/2
+
+      6) Sphere:
+         [cx,cy,cz, ax,ay,az, 0, radius, 0, 6]
+
+    Rules:
+      1) line-line : angle in [85°, 95°]  (|dot| <= cos 85° ≈ 0.0871557)
+      2) line-circle : min endpoint distance to circle center is ~ on the circle:
+           abs(dist(P_end, C_circle) - R_circle) < global_thresh
+      3) line-sphere : same as line-circle but with sphere center/radius
+      4) circle-cylinder face (corrected spec):
+           centers coincide within global_thresh (circle center ≈ cylinder midpoint), AND
+           |R_circle - R_cyl| <= radius_tol
 
     Returns:
-      List[Tuple[int, int]] with i<j
+      List[Tuple[int, int]] with i < j (original input indices)
     """
 
     # ----------------- tiny vector helpers -----------------
@@ -140,9 +155,6 @@ def perpendicular_pairs(feature_lines, global_thresh):
 
     def _norm(ax, ay, az):
         return (ax*ax + ay*ay + az*az) ** 0.5
-
-    def _sub(ax, ay, az, bx, by, bz):
-        return (ax - bx, ay - by, az - bz)
 
     def _dist(ax, ay, az, bx, by, bz):
         dx, dy, dz = ax - bx, ay - by, az - bz
@@ -156,12 +168,8 @@ def perpendicular_pairs(feature_lines, global_thresh):
 
     # ----------------- parsers by type -----------------
     def _type_code(stroke):
-        return int(round(float(stroke[-1])))
-
-    def _is_line(s):     return _type_code(s) == 1
-    def _is_circle(s):   return _type_code(s) == 2
-    def _is_cylinder(s): return _type_code(s) == 3
-    def _is_sphere(s):   return _type_code(s) == 6
+        # Avoid round(); cast and interpret as exact 1/2/3/6
+        return int(float(stroke[-1]))
 
     def _line_endpoints(s):
         # [x1,y1,z1, x2,y2,z2, 0,0,0, 1]
@@ -169,8 +177,7 @@ def perpendicular_pairs(feature_lines, global_thresh):
 
     def _line_dir(s):
         (x1,y1,z1), (x2,y2,z2) = _line_endpoints(s)
-        u = _unit(x2-x1, y2-y1, z2-z1)
-        return u  # None if degenerate
+        return _unit(x2-x1, y2-y1, z2-z1)  # None if degenerate
 
     def _circle_center_normal_radius(s):
         # [cx,cy,cz, nx,ny,nz, 0, radius, 0, 2]
@@ -179,13 +186,12 @@ def perpendicular_pairs(feature_lines, global_thresh):
         r = float(s[7])
         return (cx, cy, cz), (nx, ny, nz), r
 
-    def _cylinder_center_normal_height_radius(s):
-        # [cx,cy,cz, nx,ny,nz, height, radius, 0, 3]
-        cx, cy, cz = float(s[0]), float(s[1]), float(s[2])
-        nx, ny, nz = float(s[3]), float(s[4]), float(s[5])
-        h = float(s[6])
+    def _cylinder_lower_upper_radius(s):
+        # [lx,ly,lz, ux,uy,uz, 0.0, r, 0.0, 3]
+        lx, ly, lz = float(s[0]), float(s[1]), float(s[2])
+        ux, uy, uz = float(s[3]), float(s[4]), float(s[5])
         r = float(s[7])
-        return (cx, cy, cz), (nx, ny, nz), h, r
+        return (lx, ly, lz), (ux, uy, uz), r
 
     def _sphere_center_radius(s):
         # [cx,cy,cz, ax,ay,az, 0, radius, 0, 6]
@@ -194,7 +200,8 @@ def perpendicular_pairs(feature_lines, global_thresh):
         return (cx, cy, cz), r
 
     # ----------------- rule checks -----------------
-    PERP_DOT_MAX = 0.0873  # ~= cos(85°)
+    PERP_DOT_MAX = 0.08715574274765817  # cos(85°)
+    thr = float(global_thresh)
 
     def _line_line_perp(s1, s2):
         d1 = _line_dir(s1)
@@ -207,36 +214,27 @@ def perpendicular_pairs(feature_lines, global_thresh):
     def _line_circle_perp(line_s, circ_s):
         (x1,y1,z1), (x2,y2,z2) = _line_endpoints(line_s)
         (ccx, ccy, ccz), _n, r = _circle_center_normal_radius(circ_s)
-        # use absolute difference to test "near circumference"
         d1 = abs(_dist(x1,y1,z1, ccx,ccy,ccz) - r)
         d2 = abs(_dist(x2,y2,z2, ccx,ccy,ccz) - r)
-        return (d1 < global_thresh) or (d2 < global_thresh)
+        return (d1 < thr) or (d2 < thr)
 
     def _line_sphere_perp(line_s, sph_s):
         (x1,y1,z1), (x2,y2,z2) = _line_endpoints(line_s)
         (scx, scy, scz), r = _sphere_center_radius(sph_s)
         d1 = abs(_dist(x1,y1,z1, scx,scy,scz) - r)
         d2 = abs(_dist(x2,y2,z2, scx,scy,scz) - r)
-        return (d1 < global_thresh) or (d2 < global_thresh)
+        return (d1 < thr) or (d2 < thr)
 
     def _circle_cylinder_perp(circ_s, cyl_s):
-        (ccx, ccy, ccz), _cn, _cr = _circle_center_normal_radius(circ_s)
-        (ycx, ycy, ycz), yn, h, _yr = _cylinder_center_normal_height_radius(cyl_s)
-        n = _unit(yn[0], yn[1], yn[2])
-        if n is None:
-            return False
-        # centers equal
-        if _dist(ccx,ccy,ccz, ycx,ycy,ycz) <= global_thresh:
-            return True
-        # center = cyl_center ± h * n
-        offx, offy, offz = h*n[0], h*n[1], h*n[2]
-        upx, upy, upz = ycx + offx, ycy + offy, ycz + offz
-        dwnx, dwny, dwnz = ycx - offx, ycy - offy, ycz - offz
-        if _dist(ccx,ccy,ccz, upx,upy,upz) <= global_thresh:
-            return True
-        if _dist(ccx,ccy,ccz, dwnx,dwny,dwnz) <= global_thresh:
-            return True
-        return False
+        # Corrected spec: centers (circle center vs cylinder MIDPOINT) coincide within thr
+        # AND radii match within radius_tol.
+        (ccx, ccy, ccz), _cn, cr = _circle_center_normal_radius(circ_s)
+        (lx, ly, lz), (ux, uy, uz), rCyl = _cylinder_lower_upper_radius(cyl_s)
+
+        mcx, mcy, mcz = 0.5*(lx+ux), 0.5*(ly+uy), 0.5*(lz+uz)  # midpoint as cylinder face center
+        centers_ok = _dist(ccx, ccy, ccz, mcx, mcy, mcz) <= thr
+        radii_ok   = abs(cr - rCyl) <= radius_tol
+        return centers_ok and radii_ok
 
     # ----------------- main loop over relevant type pairs only -----------------
     n = len(feature_lines)
@@ -245,7 +243,7 @@ def perpendicular_pairs(feature_lines, global_thresh):
         si = feature_lines[i]
         ti = _type_code(si)
         if ti not in (1, 2, 3, 6):
-            continue  # skip arc(4)/spline(5)/others by your spec
+            continue  # skip other types
         for j in range(i+1, n):
             sj = feature_lines[j]
             tj = _type_code(sj)
@@ -258,27 +256,29 @@ def perpendicular_pairs(feature_lines, global_thresh):
                 ok = _line_line_perp(si, sj)
 
             # line-circle
-            elif (ti == 1 and tj == 2):
+            elif ti == 1 and tj == 2:
                 ok = _line_circle_perp(si, sj)
-            elif (ti == 2 and tj == 1):
+            elif ti == 2 and tj == 1:
                 ok = _line_circle_perp(sj, si)
 
             # line-sphere
-            elif (ti == 1 and tj == 6):
+            elif ti == 1 and tj == 6:
                 ok = _line_sphere_perp(si, sj)
-            elif (ti == 6 and tj == 1):
+            elif ti == 6 and tj == 1:
                 ok = _line_sphere_perp(sj, si)
 
-            # circle - cylinder face
-            elif (ti == 2 and tj == 3):
+            # circle - cylinder face (corrected spec)
+            elif ti == 2 and tj == 3:
                 ok = _circle_cylinder_perp(si, sj)
-            elif (ti == 3 and tj == 2):
+            elif ti == 3 and tj == 2:
                 ok = _circle_cylinder_perp(sj, si)
 
             if ok:
                 pairs.append((i, j))
 
     return pairs
+
+
 
 
 def find_planar_loops(feature_lines, global_thresh, angle_tol_deg=5.0):
@@ -1132,6 +1132,38 @@ def make_c_init_simple(anchor_idx_per_comp, num_strokes, num_cuboids):
         anchor_rows[i, k] = 1.0
 
     return C_simple, anchor_mask, anchor_rows
+
+
+def make_c_down_weight(C_init, anchor_idx_per_comp, scale=0.1):
+    """
+    Build a down-weighted seed matrix:
+      - Anchor strokes: set to one-hot (1 on their component, 0 elsewhere).
+      - Non-anchors   : keep original confidences but scale by `scale` (default 0.1).
+
+    Args:
+      C_init               : (N x K) initial confidences (from distances or elsewhere)
+      anchor_idx_per_comp  : list[int] length K (stroke index per component, -1 if none)
+      scale                : float multiplier for non-anchor rows (default 0.1)
+
+    Returns:
+      C_dw        : (N x K) float array (anchors one-hot, others scaled)
+      anchor_mask : (N,)   bool array; True where the stroke is an anchor
+    """
+    import numpy as np
+
+    C0 = np.asarray(C_init, dtype=float)
+    N, K = C0.shape
+    C_dw = C0 * float(scale)                 # downweight everyone first
+    anchor_mask = np.zeros((N,), dtype=bool)
+
+    for k, i in enumerate(anchor_idx_per_comp):
+        if i is None or i < 0 or i >= N:
+            continue
+        anchor_mask[i] = True
+        C_dw[i, :] = 0.0                     # overwrite row to one-hot
+        C_dw[i, k]  = 1.0
+
+    return C_dw, anchor_mask
 
 # ========================================================================================== #
 
