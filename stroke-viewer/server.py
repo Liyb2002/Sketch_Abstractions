@@ -1,20 +1,32 @@
 # stroke-viewer/server.py
 from pathlib import Path
-from typing import List, Any, Dict
-import json
+from typing import Any, Dict, List, Optional
+import json, os
+from tempfile import NamedTemporaryFile
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# --- Paths (match your layout) ---
-ROOT = Path(__file__).parent.resolve()     # .../stroke-viewer
-UI_DIST = ROOT / "dist"                    # Vite build output
-INPUT_DIR = ROOT.parent / "input"          # sibling folder
-STROKE_FILE = INPUT_DIR / "stroke_lines.json"
+# --- paths ---
+ROOT = Path(__file__).parent.resolve()         # .../stroke-viewer
+UI_DIST = ROOT / "dist"
+INPUT_DIR = ROOT.parent / "input"
+DEFAULT_IR = INPUT_DIR / "sketch_program_ir_editted.json"
 
-# --- Models ---
+# --- import your executor ---
+from backend.load_program_main import rescale_and_execute  # adjust if path differs
+
+# ============= CREATE APP FIRST =============
+app = FastAPI(title="Stroke Viewer")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+)
+# ============================================
+
+# --- models ---
 class Polyline(BaseModel):
     points: List[List[float]]
 
@@ -23,66 +35,93 @@ class StrokePayload(BaseModel):
     perturbed_construction_lines: List[Polyline]
     feature_lines: List[Polyline]
 
-# --- Loader (your function) ---
-def load_perturbed_feature_lines(input_dir: Path):
-    path_stroke_lines = input_dir / "stroke_lines.json"
-    with open(path_stroke_lines, "r", encoding="utf-8") as f:
-        stroke_lines = json.load(f)
+class Cuboid(BaseModel):
+    id: str
+    name: Optional[str] = None
+    center: List[float]
+    size: List[float]
+    rotationEuler: Optional[List[float]] = None
 
-    perturbed_feature_lines = stroke_lines.get("perturbed_feature_lines", [])
-    perturbed_construction_lines = stroke_lines.get("perturbed_construction_lines", [])
-    feature_lines = stroke_lines.get("feature_lines", [])
+class ExecuteResponse(BaseModel):
+    cuboids: List[Cuboid]
 
-    print(
-        f"📄 Loaded {len(perturbed_feature_lines)} perturbed feature lines, "
-        f"{len(perturbed_construction_lines)} perturbed construction lines, "
-        f"and {len(feature_lines)} feature lines"
-    )
-    return perturbed_feature_lines, perturbed_construction_lines, feature_lines
-
-# --- Normalize to polylines ---
-def _is_point(p: Any) -> bool:
-    return isinstance(p, (list, tuple)) and len(p) == 3 and all(isinstance(x, (int, float)) for x in p)
-
-def _flatten_to_polylines(raw: Any) -> List[List[List[float]]]:
-    polys: List[List[List[float]]] = []
-    if not isinstance(raw, list):
-        return polys
-    if all(_is_point(p) for p in raw):
-        if len(raw) >= 2:
-            polys.append([[float(a), float(b), float(c)] for a, b, c in raw])
-        return polys
-    for item in raw:
-        if isinstance(item, list):
-            if all(_is_point(p) for p in item):
-                if len(item) >= 2:
-                    polys.append([[float(a), float(b), float(c)] for a, b, c in item])
-            else:
-                polys.extend(_flatten_to_polylines(item))
-    return polys
-
-def normalize_bundle(bundle: Any) -> List[Dict[str, Any]]:
-    return [{"points": pl} for pl in _flatten_to_polylines(bundle) if len(pl) >= 2]
-
-# --- App ---
-app = FastAPI(title="Stroke Viewer")
-
-# If you will serve UI + API from same origin, CORS not needed — harmless if left on.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-)
-
+# --- strokes endpoint (unchanged example) ---
 @app.get("/api/strokes", response_model=StrokePayload)
 def get_strokes():
-    pf, pc, fl = load_perturbed_feature_lines(INPUT_DIR)
-    return StrokePayload(
-        perturbed_feature_lines=[Polyline(**pl) for pl in normalize_bundle(pf)],
-        perturbed_construction_lines=[Polyline(**pl) for pl in normalize_bundle(pc)],
-        feature_lines=[Polyline(**pl) for pl in normalize_bundle(fl)],
-    )
+    path = INPUT_DIR / "stroke_lines.json"
+    data = json.loads(path.read_text())
+    def norm(bundle):
+        def is_pt(p): return isinstance(p, (list,tuple)) and len(p)==3
+        def flat(raw):
+            if not isinstance(raw, list): return []
+            if all(is_pt(p) for p in raw): return [raw] if len(raw)>=2 else []
+            out=[]; 
+            for it in raw:
+                if isinstance(it, list):
+                    if all(is_pt(p) for p in it): 
+                        if len(it)>=2: out.append(it)
+                    else:
+                        out.extend(flat(it))
+            return out
+        return [Polyline(points=[[float(a),float(b),float(c)] for a,b,c in pl]) for pl in flat(bundle)]
+    return {
+        "perturbed_feature_lines": norm(data.get("perturbed_feature_lines", [])),
+        "perturbed_construction_lines": norm(data.get("perturbed_construction_lines", [])),
+        "feature_lines": norm(data.get("feature_lines", [])),
+    }
 
-# Serve the built React app at /
+# --- helpers to mirror plot_program_only semantics ---
+def _load_offsets_scales(use_offsets: bool, use_scales: bool):
+    offsets, scales = {}, {}
+    if use_offsets:
+        tf = INPUT_DIR / "fit_translations.json"
+        if tf.exists():
+            try: offsets = json.loads(tf.read_text()).get("offsets_xyz", {}) or {}
+            except Exception as e: print(f"[warn] read {tf} failed: {e}")
+    if use_scales:
+        sf = INPUT_DIR / "fit_scales.json"
+        if sf.exists():
+            try: scales = json.loads(sf.read_text()).get("scales_lwh", {}) or {}
+            except Exception as e: print(f"[warn] read {sf} failed: {e}")
+    return offsets, scales
+
+def _executor_to_cuboids(executor: Any, *, use_offsets=False, use_scales=False) -> List[Dict[str, Any]]:
+    offsets, scales = _load_offsets_scales(use_offsets, use_scales)
+    out: List[Dict[str, Any]] = []
+    for name, inst in getattr(executor, "instances", {}).items():
+        if name == "bbox": continue
+        o = inst.T[:3, 3].astype(float)                       # min corner (origin)
+        s = [float(inst.spec.l), float(inst.spec.w), float(inst.spec.h)]
+        if use_offsets and name in offsets:
+            off = offsets[name];  o = o + [float(off[0]), float(off[1]), float(off[2])]
+        if use_scales and name in scales:
+            sc = scales[name];    s = [s[0]*float(sc[0]), s[1]*float(sc[1]), s[2]*float(sc[2])]
+        center = [float(o[0]+s[0]/2), float(o[1]+s[1]/2), float(o[2]+s[2]/2)]
+        out.append({"id": name, "name": name, "center": center, "size": s, "rotationEuler": None})
+    return out
+
+# --- program execution endpoints (these need 'app' defined already) ---
+@app.post("/api/execute-default", response_model=ExecuteResponse)
+def api_execute_default(use_offsets: bool = False, use_scales: bool = False):
+    if not DEFAULT_IR.exists():
+        raise HTTPException(status_code=404, detail=f"Default IR not found: {DEFAULT_IR}")
+    exe = rescale_and_execute(INPUT_DIR, DEFAULT_IR)
+    cuboids = _executor_to_cuboids(exe, use_offsets=use_offsets, use_scales=use_scales)
+    return {"cuboids": [Cuboid(**c) for c in cuboids]}
+
+@app.post("/api/execute", response_model=ExecuteResponse)
+def api_execute(program: dict = Body(...), use_offsets: bool = False, use_scales: bool = False):
+    with NamedTemporaryFile("w", delete=False, suffix=".json", dir=str(INPUT_DIR)) as tmp:
+        json.dump(program, tmp); tmp_path = Path(tmp.name)
+    try:
+        exe = rescale_and_execute(INPUT_DIR, tmp_path)
+        cuboids = _executor_to_cuboids(exe, use_offsets=use_offsets, use_scales=use_scales)
+        return {"cuboids": [Cuboid(**c) for c in cuboids]}
+    finally:
+        try: os.remove(tmp_path)
+        except Exception: pass
+
+# --- static UI at '/' (after app exists is fine) ---
 if not UI_DIST.exists():
     print(f"⚠️  Build not found at {UI_DIST}. Run `npm run build` in stroke-viewer/")
 app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
