@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import List, Optional
 import traceback
+import json
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +11,9 @@ from pydantic import BaseModel
 
 from backend.load_program_main import (
     UI_DIST,
+    INPUT_DIR,
     load_strokes_payload,
-    execute_default_to_cuboids,   # <-- only this remains
+    execute_default_to_cuboids,
 )
 
 # App setup
@@ -39,13 +41,25 @@ class Cuboid(BaseModel):
 
 class Anchor(BaseModel):
     cuboidId: str
-    cuboidName: str
+    cuboidName: Optional[str] = None
     strokeIndex: int
-    # strokePoints optional—UI pulls by index
 
 class ExecuteResponse(BaseModel):
     cuboids: List[Cuboid]
     anchors: List[Anchor]
+
+# Save-anchors request/response
+class SaveAnchorItem(BaseModel):
+    cuboidId: str
+    strokeIndex: int
+
+class SaveAnchorsRequest(BaseModel):
+    anchors: List[SaveAnchorItem]
+
+class SaveAnchorsResponse(BaseModel):
+    ok: bool
+    saved: int
+    path: str
 
 # Routes
 @app.get("/api/strokes", response_model=StrokePayload)
@@ -58,6 +72,23 @@ def api_execute_default(use_offsets: bool = False, use_scales: bool = False):
         return execute_default_to_cuboids(use_offsets=use_offsets, use_scales=use_scales)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        tb = traceback.format_exc()
+        print(tb)
+        raise HTTPException(status_code=500, detail=tb)
+
+@app.post("/api/save-anchors", response_model=SaveAnchorsResponse)
+def api_save_anchors(req: SaveAnchorsRequest):
+    try:
+        out_path = INPUT_DIR / "anchor_strokes.json"
+        payload = {
+            "anchors": [
+                {"cuboidId": a.cuboidId, "strokeIndex": a.strokeIndex}
+                for a in req.anchors
+            ]
+        }
+        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return SaveAnchorsResponse(ok=True, saved=len(req.anchors), path=str(out_path))
     except Exception:
         tb = traceback.format_exc()
         print(tb)

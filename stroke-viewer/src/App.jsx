@@ -3,8 +3,8 @@
 // --- Build tag to confirm bundle freshness ---
 console.log("[BUILD TAG]", new Date().toISOString());
 
-import { Suspense, useEffect, useMemo, useRef, useState, Fragment } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Suspense, useEffect, useMemo, useState, Fragment } from "react";
+import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Line, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
 
@@ -19,6 +19,13 @@ const loadCuboidsDefault = async ({ use_offsets = true, use_scales = false } = {
   const qs = `?use_offsets=${String(use_offsets)}&use_scales=${String(use_scales)}`;
   return fetchJSON(`/api/execute-default${qs}`, { method: "POST" });
 };
+const saveAnchors = async (anchorsArray) => {
+  return fetchJSON("/api/save-anchors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ anchors: anchorsArray }),
+  });
+};
 
 /* ================= colors & keys ================= */
 const PALETTE = [
@@ -30,7 +37,7 @@ function hashString(s) { let h=2166136261>>>0; for (let i=0;i<s.length;i++){h^=s
 function colorForName(nameOrId) { const idx = hashString(String(nameOrId ?? "")) % PALETTE.length; return PALETTE[idx]; }
 function normalizeKey(s) { return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " "); }
 
-/* ================= small debug helpers ================= */
+/* ================= UI bits ================= */
 function DebugOverlay({ cuboids, anchorsMap, colorMap, selectedComp }) {
   return (
     <div style={{
@@ -46,29 +53,32 @@ function DebugOverlay({ cuboids, anchorsMap, colorMap, selectedComp }) {
   );
 }
 
-function Instructions({ selected, onReset, onExport, onImport }) {
+function Instructions({ selected, onReset, onExport, onImport, onSave, saveDisabled }) {
   return (
     <div style={{
       position: "absolute", left: 12, bottom: 12, zIndex: 9999,
       background: "rgba(255,255,255,0.97)", border: "1px solid #e5e7eb",
-      borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "#111827", display: "flex", gap: 10, alignItems: "center"
+      borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "#111827",
+      display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap"
     }}>
       <span style={{ fontWeight: 600 }}>
         {selected ? `Selected component: ${selected}. Now click a stroke to anchor.` : "Click a component, then click a stroke to anchor."}
       </span>
-      <button onClick={onReset} style={{ padding: "4px 8px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff" }}>
-        Clear selection
+      <button onClick={onReset} style={btnStyle}>Clear selection</button>
+      <button onClick={onSave} style={{ ...btnStyle, opacity: saveDisabled ? 0.5 : 1 }} disabled={saveDisabled}>
+        Save anchor strokes
       </button>
-      <button onClick={onExport} style={{ padding: "4px 8px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff" }}>
-        Export anchors
-      </button>
-      <label style={{ padding: "4px 8px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer" }}>
+      <button onClick={onExport} style={btnStyle}>Export anchors</button>
+      <label style={{ ...btnStyle, cursor: "pointer" }}>
         Import anchors
         <input type="file" accept="application/json" onChange={onImport} style={{ display: "none" }} />
       </label>
     </div>
   );
 }
+const btnStyle = {
+  padding: "4px 8px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff"
+};
 
 /* ================= strokes renderer ================= */
 function PolylineGroup({ polylines, color = "#e5e7eb", lineWidth = 1.4 }) {
@@ -87,26 +97,21 @@ function PolylineGroup({ polylines, color = "#e5e7eb", lineWidth = 1.4 }) {
 /* ========== clickable strokes (for selection) ========== */
 function ClickableStroke({
   index, points, onPick, visibleLineWidth = 1.4, pickLineWidth = 8.0,
-  baseColor = "#e5e7eb", highlightColor = null, isSelected = false
+  baseColor = "#e5e7eb", highlightColor = null
 }) {
   if (!points || points.length < 2) return null;
 
-  // Visible base line (grey or highlighted if this stroke is currently anchored)
   const visColor = highlightColor || baseColor;
   return (
     <group>
       <Line points={points} color={visColor} lineWidth={visibleLineWidth} transparent={false} />
-      {/* Invisible (but pickable) thicker line sitting on top to make clicking easy */}
       <Line
         points={points}
         color={highlightColor || baseColor}
         lineWidth={pickLineWidth}
         transparent
         opacity={0.0}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onPick?.(index);
-        }}
+        onPointerDown={(e) => { e.stopPropagation(); onPick?.(index); }}
       />
     </group>
   );
@@ -121,7 +126,7 @@ function ClickableStrokes({
 }) {
   if (!strokesPF?.length) return null;
 
-  // Build reverse map: strokeIndex -> compKey (so we can color anchored strokes)
+  // strokeIndex -> compKey (so we can color anchored strokes)
   const strokeToComp = new Map();
   anchorsMap.forEach((sidx, compKey) => {
     if (Number.isInteger(sidx)) strokeToComp.set(sidx, compKey);
@@ -131,7 +136,6 @@ function ClickableStrokes({
     <group>
       {strokesPF.map((pl, i) => {
         const compKey = strokeToComp.get(i); // which component (if any) anchors to this stroke
-        const isSelectedTarget = selectedCompKey != null; // any selected component means we’re choosing a stroke
         const highlightColor = compKey ? (colorMap.get(compKey) || "#111827") : null;
 
         return (
@@ -144,7 +148,6 @@ function ClickableStrokes({
             pickLineWidth={8.0}
             baseColor="#d1d5db"
             highlightColor={highlightColor}
-            isSelected={isSelectedTarget}
           />
         );
       })}
@@ -194,7 +197,6 @@ function ClickableCuboidEdges({ cuboid, color, lineWidth = 3.0, isSelected = fal
           depthTest={true}
         />
       ))}
-      {/* Click helper: a slightly thicker invisible line on top for easier picking */}
       {EDGE_IDX.map(([a, b], i) => (
         <Line
           key={`${cuboid.id}-pick-${i}`}
@@ -305,8 +307,9 @@ export default function App() {
   const [cuboids, setCuboids] = useState([]);
   const [anchorsMap, setAnchorsMap] = useState(new Map()); // Map(compKey -> strokeIndex)
   const [selectedCompKey, setSelectedCompKey] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  // Auto-load both (and log payload)
+  // Auto-load strokes & default execution
   useEffect(() => {
     (async () => {
       try {
@@ -320,7 +323,7 @@ export default function App() {
         setStrokes(s);
         setCuboids(c.cuboids || []);
 
-        // initialize anchors map from backend anchors
+        // init anchors map
         const init = new Map();
         (c.anchors || []).forEach(a => {
           const compKey = normalizeKey(a.cuboidName ?? a.cuboidId);
@@ -340,14 +343,13 @@ export default function App() {
       const key = normalizeKey(c.name ?? c.id);
       if (!m.has(key)) m.set(key, colorForName(key));
     }
-    // also ensure colors for any anchors keys (even if not in cuboids for some reason)
     anchorsMap.forEach((_sidx, compKey) => {
       if (!m.has(compKey)) m.set(compKey, colorForName(compKey));
     });
     return m;
   }, [cuboids, anchorsMap]);
 
-  // derived lists
+  // derived values
   const zUpRotation = useMemo(() => new THREE.Euler(-Math.PI / 2, 0, 0), []);
   const offsetVec = useMemo(
     () => separationOffset(strokes.perturbed_feature_lines, cuboids),
@@ -360,7 +362,6 @@ export default function App() {
       const key = normalizeKey(label);
       if (!map.has(key)) map.set(key, label);
     }
-    // include any anchors-only labels (unlikely, but safe)
     anchorsMap.forEach((_sidx, compKey) => {
       if (!map.has(compKey)) map.set(compKey, compKey);
     });
@@ -373,11 +374,9 @@ export default function App() {
     if (!cam) return;
     const box = new THREE.Box3();
 
-    // base strokes
     for (const pl of strokes.perturbed_feature_lines) {
       for (const p of pl.points ?? []) box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
     }
-    // cuboids (apply offset)
     const tmp = new THREE.Box3();
     for (const c of cuboids) {
       const [L, W, H] = c.size;
@@ -404,23 +403,42 @@ export default function App() {
   const handlePickCuboid = (cub) => {
     const compKey = normalizeKey(cub.name ?? cub.id);
     setSelectedCompKey(compKey);
-    // ensure this comp has a color
-    if (!colorMap.has(compKey)) {
-      colorMap.set(compKey, colorForName(compKey));
-    }
   };
-
   const handlePickStrokeIndex = (sidx) => {
     if (!Number.isInteger(sidx)) return;
-    if (!selectedCompKey) return; // nothing selected
+    if (!selectedCompKey) return;
     setAnchorsMap((prev) => {
       const next = new Map(prev);
-      next.set(selectedCompKey, sidx);  // re-anchor: old stroke auto de-highlights since mapping changes
+      next.set(selectedCompKey, sidx);
       return next;
     });
   };
 
-  // front-end export/import for convenience (no backend writes yet)
+  // Save anchors → POST /api/save-anchors
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      // Build array with ORIGINAL component labels (prefer c.name over id)
+      const anchorsArray = [];
+      anchorsMap.forEach((sidx, compKey) => {
+        const found = cuboids.find(c => normalizeKey(c.name ?? c.id) === compKey);
+        const label = found ? (found.name ?? found.id) : compKey; // fallback to key
+        if (Number.isInteger(sidx)) {
+          anchorsArray.push({ cuboidId: String(label), strokeIndex: sidx });
+        }
+      });
+      const resp = await saveAnchors(anchorsArray);
+      console.log("Saved anchors:", resp);
+      alert(`Saved ${resp.saved} anchors to:\n${resp.path}`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save anchors. Check console for details.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Export/Import (front-end convenience)
   const handleExport = () => {
     const obj = {};
     anchorsMap.forEach((sidx, compKey) => { obj[compKey] = sidx; });
@@ -458,6 +476,8 @@ export default function App() {
         onReset={() => setSelectedCompKey(null)}
         onExport={handleExport}
         onImport={handleImport}
+        onSave={handleSave}
+        saveDisabled={saving || anchorsMap.size === 0}
       />
 
       <Canvas camera={{ fov: 45 }}>
@@ -469,7 +489,7 @@ export default function App() {
 
           {/* Z-up world */}
           <group rotation={new THREE.Euler(-Math.PI / 2, 0, 0)}>
-            {/* FULL set of clickable strokes on the left side (base grey + colored if anchored) */}
+            {/* Clickable strokes (left), colored where anchored */}
             <ClickableStrokes
               strokesPF={strokes.perturbed_feature_lines}
               anchorsMap={anchorsMap}
@@ -478,7 +498,7 @@ export default function App() {
               onPickStrokeIndex={handlePickStrokeIndex}
             />
 
-            {/* Cuboids (edge-only), shifted right to avoid overlap, clickable to select component */}
+            {/* Clickable cuboids (right) */}
             <group position={[offsetVec.x, offsetVec.y, offsetVec.z]}>
               <CuboidEdgesInteractive
                 cuboids={cuboids}
@@ -488,7 +508,6 @@ export default function App() {
               />
             </group>
 
-            {/* Optional axes */}
             <axesHelper args={[2]} />
           </group>
 
