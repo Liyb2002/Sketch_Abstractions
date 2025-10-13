@@ -626,21 +626,23 @@ def rescale_and_execute(input_dir: Path, ir_path) -> Executor:
         _shift_ir_bbox_z_inplace(ir_mut, dz)
         print("🧩 Applied Z shift.")
     else:
-        print("dz negligible; no Z shift needed.")
+        pass
+        # print("dz negligible; no Z shift needed.")
 
     before_norm = json.dumps(ir_mut, sort_keys=True)
     normalize_attaches_to_parent_tree_inplace(ir_mut)
     after_norm = json.dumps(ir_mut, sort_keys=True)
     if before_norm != after_norm:
-        print("🔧 Normalized parent-tree attaches.")
+        pass
+        # print("🔧 Normalized parent-tree attaches.")
 
     # Write only if changed
     ir_mut_text = json.dumps(ir_mut, indent=2)
     if ir_mut_text != ir_original_text:
         ir_path.write_text(ir_mut_text, encoding="utf-8")
-        print(f"💾 Saved updated IR to: {ir_path}")
     else:
-        print("No changes required; IR not modified.")
+        pass
+        # print("No changes required; IR not modified.")
 
     # Re-execute what’s on disk (not “extra”; this is your existing after step)
     ir_after = json.loads(ir_path.read_text(encoding="utf-8"))

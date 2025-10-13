@@ -1,27 +1,27 @@
 # stroke-viewer/server.py
 from __future__ import annotations
 from typing import List, Optional
-from fastapi import FastAPI, Body, HTTPException
+import traceback
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# All compute lives in backend.load_program_main
 from backend.load_program_main import (
     UI_DIST,
     load_strokes_payload,
-    execute_default_to_cuboids,
-    execute_program_json_to_cuboids,
+    execute_default_to_cuboids,   # <-- only this remains
 )
 
-# ---- App (tiny) ----
-app = FastAPI(title="Stroke Viewer (clean)")
+# App setup
+app = FastAPI(title="Stroke Viewer (default IR only)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-# ---- Schemas (for nice docs / type-checked responses) ----
+# Schemas
 class Polyline(BaseModel):
     points: List[List[float]]
 
@@ -37,10 +37,17 @@ class Cuboid(BaseModel):
     size: List[float]
     rotationEuler: Optional[List[float]] = None
 
+class Anchor(BaseModel):
+    cuboidId: str
+    cuboidName: str
+    strokeIndex: int
+    # strokePoints optional—UI pulls by index
+
 class ExecuteResponse(BaseModel):
     cuboids: List[Cuboid]
+    anchors: List[Anchor]
 
-# ---- Endpoints (just delegate) ----
+# Routes
 @app.get("/api/strokes", response_model=StrokePayload)
 def api_strokes():
     return load_strokes_payload()
@@ -51,17 +58,12 @@ def api_execute_default(use_offsets: bool = False, use_scales: bool = False):
         return execute_default_to_cuboids(use_offsets=use_offsets, use_scales=use_scales)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"execution failed: {e}")
+    except Exception:
+        tb = traceback.format_exc()
+        print(tb)
+        raise HTTPException(status_code=500, detail=tb)
 
-@app.post("/api/execute", response_model=ExecuteResponse)
-def api_execute(program: dict = Body(...), use_offsets: bool = False, use_scales: bool = False):
-    try:
-        return execute_program_json_to_cuboids(program, use_offsets=use_offsets, use_scales=use_scales)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"execution failed: {e}")
-
-# ---- Static UI at '/' ----
+# Static UI
 if not UI_DIST.exists():
     print(f"⚠️  UI build not found at {UI_DIST}. Run `npm run build` in stroke-viewer/")
 app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
