@@ -37,14 +37,33 @@ function hashString(s) { let h=2166136261>>>0; for (let i=0;i<s.length;i++){h^=s
 function colorForName(nameOrId) { const idx = hashString(String(nameOrId ?? "")) % PALETTE.length; return PALETTE[idx]; }
 function normalizeKey(s) { return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " "); }
 
+/* ================= shared UI styles ================= */
+const baseFont = {
+  fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial',
+  fontSize: 12,
+  color: "#111827",
+};
+const panelStyle = {
+  position: "absolute",
+  zIndex: 9999,
+  background: "rgba(255,255,255,0.95)",
+  border: "1px solid #e5e7eb",
+  borderRadius: 8,
+  padding: "6px 8px",
+  ...baseFont,
+};
+const btnStyle = {
+  padding: "4px 8px",
+  borderRadius: 6,
+  border: "1px solid #d1d5db",
+  background: "#fff",
+  ...baseFont,
+};
+
 /* ================= UI bits ================= */
 function DebugOverlay({ cuboids, anchorsMap, colorMap, selectedComp }) {
   return (
-    <div style={{
-      position: "absolute", left: 12, top: 12, zIndex: 9999,
-      background: "rgba(255,255,255,0.95)", border: "1px solid #e5e7eb",
-      borderRadius: 8, padding: "6px 8px", fontSize: 12, color: "#111827"
-    }}>
+    <div style={{ ...panelStyle, left: 12, top: 12 }}>
       <div>cuboids: {cuboids.length}</div>
       <div>anchors: {anchorsMap.size}</div>
       <div>colorMap keys: {colorMap.size}</div>
@@ -52,15 +71,35 @@ function DebugOverlay({ cuboids, anchorsMap, colorMap, selectedComp }) {
     </div>
   );
 }
-
+function TopTitles() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: "15%",              // keep around middle height
+        left: 0,
+        right: 0,
+        zIndex: 9998,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: "12%",               // controls how close the two titles are
+        pointerEvents: "none",
+        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial',
+        fontWeight: 700,
+        fontSize: 36,
+        color: "#111827",
+        opacity: 0.9,
+      }}
+    >
+      <div>3D strokes</div>
+      <div>DSL execution</div>
+    </div>
+  );
+}
 function Instructions({ selected, onReset, onExport, onImport, onSave, saveDisabled }) {
   return (
-    <div style={{
-      position: "absolute", left: 12, bottom: 12, zIndex: 9999,
-      background: "rgba(255,255,255,0.97)", border: "1px solid #e5e7eb",
-      borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "#111827",
-      display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap"
-    }}>
+    <div style={{ ...panelStyle, left: 12, bottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
       <span style={{ fontWeight: 600 }}>
         {selected ? `Selected component: ${selected}. Now click a stroke to anchor.` : "Click a component, then click a stroke to anchor."}
       </span>
@@ -76,9 +115,6 @@ function Instructions({ selected, onReset, onExport, onImport, onSave, saveDisab
     </div>
   );
 }
-const btnStyle = {
-  padding: "4px 8px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff"
-};
 
 /* ================= strokes renderer ================= */
 function PolylineGroup({ polylines, color = "#e5e7eb", lineWidth = 1.4 }) {
@@ -100,7 +136,6 @@ function ClickableStroke({
   baseColor = "#e5e7eb", highlightColor = null
 }) {
   if (!points || points.length < 2) return null;
-
   const visColor = highlightColor || baseColor;
   return (
     <group>
@@ -116,28 +151,21 @@ function ClickableStroke({
     </group>
   );
 }
-
 function ClickableStrokes({
   strokesPF,
-  anchorsMap,            // Map(compKey -> strokeIndex)
-  colorMap,               // Map(compKey -> color)
-  selectedCompKey,        // normalized key of selected component
-  onPickStrokeIndex,      // (strokeIndex) => void
+  anchorsMap, colorMap,
+  selectedCompKey,
+  onPickStrokeIndex,
 }) {
   if (!strokesPF?.length) return null;
-
-  // strokeIndex -> compKey (so we can color anchored strokes)
   const strokeToComp = new Map();
-  anchorsMap.forEach((sidx, compKey) => {
-    if (Number.isInteger(sidx)) strokeToComp.set(sidx, compKey);
-  });
+  anchorsMap.forEach((sidx, compKey) => { if (Number.isInteger(sidx)) strokeToComp.set(sidx, compKey); });
 
   return (
     <group>
       {strokesPF.map((pl, i) => {
-        const compKey = strokeToComp.get(i); // which component (if any) anchors to this stroke
+        const compKey = strokeToComp.get(i);
         const highlightColor = compKey ? (colorMap.get(compKey) || "#111827") : null;
-
         return (
           <ClickableStroke
             key={i}
@@ -172,11 +200,9 @@ function cuboidCorners(center, size, rotationEuler) {
   corners.forEach(v => v.add(new THREE.Vector3(cx,cy,cz)));
   return corners;
 }
-
 function ClickableCuboidEdges({ cuboid, color, lineWidth = 3.0, isSelected = false, onPick }) {
+  const thick = isSelected ? lineWidth + 12.0 : lineWidth;
   const corners = cuboidCorners(cuboid.center, cuboid.size, cuboid.rotationEuler);
-  const thick = isSelected ? lineWidth + 1.5 : lineWidth;
-
   return (
     <group
       onPointerDown={(e) => { e.stopPropagation(); onPick?.(cuboid); }}
@@ -205,7 +231,7 @@ function ClickableCuboidEdges({ cuboid, color, lineWidth = 3.0, isSelected = fal
             [corners[b].x, corners[b].y, corners[b].z],
           ]}
           color={color}
-          lineWidth={thick + 6}
+          lineWidth={thick + 8}
           transparent
           opacity={0.0}
           onPointerDown={(e) => { e.stopPropagation(); onPick?.(cuboid); }}
@@ -214,7 +240,6 @@ function ClickableCuboidEdges({ cuboid, color, lineWidth = 3.0, isSelected = fal
     </group>
   );
 }
-
 function CuboidEdgesInteractive({ cuboids, colorMap, selectedCompKey, onPickCuboid }) {
   if (!cuboids?.length) return null;
   return (
@@ -227,7 +252,7 @@ function CuboidEdgesInteractive({ cuboids, colorMap, selectedCompKey, onPickCubo
           <ClickableCuboidEdges
             key={c.id}
             cuboid={c}
-            color={isSelected ? "#111827" : clr}
+            color={clr}
             lineWidth={3.0}
             isSelected={isSelected}
             onPick={(cub) => onPickCuboid?.(cub)}
@@ -256,7 +281,7 @@ function bboxOfCuboids(cuboids) {
   }
   return box;
 }
-function separationOffset(strokePolys, cuboids, marginFrac = 0.15) {
+function separationOffset(strokePolys, cuboids, marginFrac = 0.35) {
   const bs = bboxOfPolylines(strokePolys);
   const bc = bboxOfCuboids(cuboids);
   if (bs.isEmpty() || bc.isEmpty()) return new THREE.Vector3(0, 0, 0);
@@ -273,12 +298,8 @@ function separationOffset(strokePolys, cuboids, marginFrac = 0.15) {
 function Legend({ names, colorMap }) {
   if (!names.length) return null;
   return (
-    <div style={{
-      position: "absolute", right: 12, top: 12, zIndex: 20,
-      background: "rgba(255,255,255,0.95)", border: "1px solid #e5e7eb",
-      borderRadius: 8, padding: "8px 10px", maxWidth: 320
-    }}>
-      <div style={{ fontSize: 12, marginBottom: 6, color: "#374151" }}>Components</div>
+    <div style={{ ...panelStyle, right: 12, top: 12, maxWidth: 320 }}>
+      <div style={{ ...baseFont, marginBottom: 6 }}>Components</div>
       <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 10px" }}>
         {names.map((label) => (
           <Fragment key={label}>
@@ -289,7 +310,7 @@ function Legend({ names, colorMap }) {
                 display: "inline-block", marginTop: 2
               }}
             />
-            <span style={{ fontSize: 12, color: "#111827", whiteSpace: "nowrap" }}>{label}</span>
+            <span style={{ ...baseFont, whiteSpace: "nowrap" }}>{label}</span>
           </Fragment>
         ))}
       </div>
@@ -309,6 +330,11 @@ export default function App() {
   const [selectedCompKey, setSelectedCompKey] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // previous distance multiplier you liked
+  const DIST_MULT = 2.5;
+  // shrink current distance to 2/3
+  const REL_SCALE = 2 / 3;
+
   // Auto-load strokes & default execution
   useEffect(() => {
     (async () => {
@@ -317,13 +343,8 @@ export default function App() {
           loadStrokes(),
           loadCuboidsDefault({ use_offsets: true, use_scales: false }),
         ]);
-
-        console.log("[UI] execute-default payload:", c, "anchors length:", (c?.anchors || []).length);
-
         setStrokes(s);
         setCuboids(c.cuboids || []);
-
-        // init anchors map
         const init = new Map();
         (c.anchors || []).forEach(a => {
           const compKey = normalizeKey(a.cuboidName ?? a.cuboidId);
@@ -336,7 +357,7 @@ export default function App() {
     })();
   }, []);
 
-  // color map: union of cuboid names and anchor names (normalized)
+  // color map
   const colorMap = useMemo(() => {
     const m = new Map();
     for (const c of cuboids) {
@@ -349,12 +370,18 @@ export default function App() {
     return m;
   }, [cuboids, anchorsMap]);
 
-  // derived values
-  const zUpRotation = useMemo(() => new THREE.Euler(-Math.PI / 2, 0, 0), []);
-  const offsetVec = useMemo(
+  // ---- symmetric offsets (strokes left, cuboids right) ----
+  const baseOffset = useMemo(
     () => separationOffset(strokes.perturbed_feature_lines, cuboids),
     [strokes.perturbed_feature_lines, cuboids]
   );
+  const fullOffset = useMemo(
+    () => baseOffset.clone().multiplyScalar(DIST_MULT * REL_SCALE),
+    [baseOffset]
+  );
+  const strokeShift = useMemo(() => fullOffset.clone().multiplyScalar(-0.5), [fullOffset]);
+  const cuboidShift = useMemo(() => fullOffset.clone().multiplyScalar(0.5), [fullOffset]);
+
   const legendNames = useMemo(() => {
     const map = new Map();
     for (const c of cuboids) {
@@ -368,21 +395,24 @@ export default function App() {
     return Array.from(map.values());
   }, [cuboids, anchorsMap]);
 
-  // Fit camera to strokes + offset cuboids
+  // Fit camera to the symmetrically shifted groups
   useEffect(() => {
     const cam = window.__r3f?.store.getState().camera;
     if (!cam) return;
     const box = new THREE.Box3();
-
+    // strokes (shifted left)
     for (const pl of strokes.perturbed_feature_lines) {
-      for (const p of pl.points ?? []) box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
+      for (const p of pl.points ?? []) {
+        box.expandByPoint(new THREE.Vector3(p[0] + strokeShift.x, p[1] + strokeShift.y, p[2] + strokeShift.z));
+      }
     }
+    // cuboids (shifted right)
     const tmp = new THREE.Box3();
     for (const c of cuboids) {
       const [L, W, H] = c.size;
-      const cx = c.center[0] + offsetVec.x;
-      const cy = c.center[1] + offsetVec.y;
-      const cz = c.center[2] + offsetVec.z;
+      const cx = c.center[0] + cuboidShift.x;
+      const cy = c.center[1] + cuboidShift.y;
+      const cz = c.center[2] + cuboidShift.z;
       tmp.min.set(cx - L/2, cy - W/2, cz - H/2);
       tmp.max.set(cx + L/2, cy + W/2, cz + H/2);
       box.union(tmp);
@@ -397,35 +427,26 @@ export default function App() {
     cam.far = Math.max(1000, maxSize * 1000);
     cam.lookAt(center);
     cam.updateProjectionMatrix();
-  }, [strokes.perturbed_feature_lines, cuboids, offsetVec]);
+  }, [strokes.perturbed_feature_lines, cuboids, strokeShift, cuboidShift]);
 
   // Handlers
-  const handlePickCuboid = (cub) => {
-    const compKey = normalizeKey(cub.name ?? cub.id);
-    setSelectedCompKey(compKey);
-  };
+  const handlePickCuboid = (cub) => setSelectedCompKey(normalizeKey(cub.name ?? cub.id));
   const handlePickStrokeIndex = (sidx) => {
-    if (!Number.isInteger(sidx)) return;
-    if (!selectedCompKey) return;
+    if (!Number.isInteger(sidx) || !selectedCompKey) return;
     setAnchorsMap((prev) => {
       const next = new Map(prev);
       next.set(selectedCompKey, sidx);
       return next;
     });
   };
-
-  // Save anchors → POST /api/save-anchors
   const handleSave = async () => {
     try {
       setSaving(true);
-      // Build array with ORIGINAL component labels (prefer c.name over id)
       const anchorsArray = [];
       anchorsMap.forEach((sidx, compKey) => {
         const found = cuboids.find(c => normalizeKey(c.name ?? c.id) === compKey);
-        const label = found ? (found.name ?? found.id) : compKey; // fallback to key
-        if (Number.isInteger(sidx)) {
-          anchorsArray.push({ cuboidId: String(label), strokeIndex: sidx });
-        }
+        const label = found ? (found.name ?? found.id) : compKey;
+        if (Number.isInteger(sidx)) anchorsArray.push({ cuboidId: String(label), strokeIndex: sidx });
       });
       const resp = await saveAnchors(anchorsArray);
       console.log("Saved anchors:", resp);
@@ -437,8 +458,6 @@ export default function App() {
       setSaving(false);
     }
   };
-
-  // Export/Import (front-end convenience)
   const handleExport = () => {
     const obj = {};
     anchorsMap.forEach((sidx, compKey) => { obj[compKey] = sidx; });
@@ -468,7 +487,8 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#ffffff" }}>
+    <div style={{ width: "100vw", height: "100vh", background: "#ffffff", ...baseFont }}>
+      <TopTitles />
       <DebugOverlay cuboids={cuboids} anchorsMap={anchorsMap} colorMap={colorMap} selectedComp={selectedCompKey} />
       <Legend names={legendNames} colorMap={colorMap} />
       <Instructions
@@ -489,17 +509,19 @@ export default function App() {
 
           {/* Z-up world */}
           <group rotation={new THREE.Euler(-Math.PI / 2, 0, 0)}>
-            {/* Clickable strokes (left), colored where anchored */}
-            <ClickableStrokes
-              strokesPF={strokes.perturbed_feature_lines}
-              anchorsMap={anchorsMap}
-              colorMap={colorMap}
-              selectedCompKey={selectedCompKey}
-              onPickStrokeIndex={handlePickStrokeIndex}
-            />
+            {/* Strokes (shifted left) */}
+            <group position={[strokeShift.x, strokeShift.y, strokeShift.z]}>
+              <ClickableStrokes
+                strokesPF={strokes.perturbed_feature_lines}
+                anchorsMap={anchorsMap}
+                colorMap={colorMap}
+                selectedCompKey={selectedCompKey}
+                onPickStrokeIndex={handlePickStrokeIndex}
+              />
+            </group>
 
-            {/* Clickable cuboids (right) */}
-            <group position={[offsetVec.x, offsetVec.y, offsetVec.z]}>
+            {/* Cuboids (shifted right) */}
+            <group position={[cuboidShift.x, cuboidShift.y, cuboidShift.z]}>
               <CuboidEdgesInteractive
                 cuboids={cuboids}
                 colorMap={colorMap}
