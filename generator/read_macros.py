@@ -27,7 +27,8 @@ def load_component(json_path, output_path, parent=None, labels = [0]):
             'condition': variant.get('condition', 'None'),
             'path' : variant.get('path', []),
             'mating_reference' : variant.get('mating_reference', None),
-            'detail_type' : variant.get('detail_type', 'overview')
+            'detail_type' : variant.get('detail_type', 'overview'),
+            'extrude_dir' : variant.get('extrude_dir', 'z'),
         }
     else:
         data = {

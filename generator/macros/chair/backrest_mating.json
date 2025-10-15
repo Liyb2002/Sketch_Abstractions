@@ -1,32 +1,30 @@
 {
-  "name": "backrest_hole",
+  "name": "backrest_mating",
   "children" : [],
   "variants": [
   {
-      "name": "backrest_hole_square",
-      "boolean" : "subtraction",
+      "name": "backrest_mating",
+      "boolean" : "addition",
       "detail_type": "detail",
+      "extrude_dir" : "-y", 
       "parameters": {
-        "x_length": "parent x_length  * [0.2, 0.8]",
-        "y_length": "parent y_length * [1.01, 1.02] " ,
+        "x_length": "parent x_length  * [0.2, 0.3]",
+        "y_length": "parent y_length * [0.2, 0.3] " ,
         "z_length": "parent z_length  * [0.2, 0.3]"
       },
       "location": {
          "x_location": 0, 
          "y_location": 0, 
-         "z_location": "parent z_length * 0.5"
+         "z_location": -0.2
         },
   
       "cad_operations": [
-        { "name": "sketch_rectangle" },
+        { "name": "sketch_circle" },
         { "name": "extrude" }
         
 
       ]
     }
-
-
-
      
   ]
 }

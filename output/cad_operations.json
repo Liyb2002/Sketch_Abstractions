@@ -31,14 +31,11 @@
         "extrude",
         "sketch",
         "extrude",
-        "sketch",
-        "extrude",
         "pattern"
     ],
     "0-1-2": [
         "sketch",
-        "sweep",
-        "mirror"
+        "extrude"
     ],
     "0-2": [
         "sketch",

@@ -9,6 +9,9 @@ import os
 import json
 
 
+from compute_sketch_points import compute_rectangle, compute_circle, compute_triangle
+
+
 class Component:
     def __init__(self, data: dict, parent=None, labels = [0], output_path = Path(__file__).parent.parent / "output"):
         """
@@ -27,6 +30,7 @@ class Component:
         self.cad_operations = data['cad_operations']
         self.detail_type = data['detail_type']
         self.ops = []
+        self.extrude_dir = data.get('extrude_dir', 'z')
 
         self.quantity = data.get('quantity', 1)
         self.locations = data.get('locations')
@@ -209,6 +213,8 @@ class Component:
 
 
     def build_one_instance(self, idx, location, tempt_canvas):
+        
+        print("self.extrude_dir", self.extrude_dir)
 
         if self.name == "root":
             return 
@@ -233,62 +239,23 @@ class Component:
 
             if op_name == "sketch_rectangle":
                 self.ops.append("sketch")
-                half_x, half_y = x_len / 2, y_len / 2
-                new_point_list = [
-                    [x - half_x, y - half_y, z],
-                    [x + half_x, y - half_y, z],
-                    [x + half_x, y + half_y, z],
-                    [x - half_x, y + half_y, z]
-                ]
-                sketch = build123.protocol.build_sketch(
-                    new_point_list
-                )
+                pts = compute_rectangle(x_len, y_len, z_len, (x, y, z), self.extrude_dir)
+                sketch = build123.protocol.build_sketch(pts)
                 self.save_single_sketch(sketch)
+
 
             elif op_name == "sketch_circle":
                 self.ops.append("sketch")
-                radius = x_len / 2
-                center = [x,y,z]
-
-
-                normal_axis = self.chosen_parameters.get("normal", ["z"])[0]  # default to z
-                if normal_axis.startswith("-"):
-                    axis = normal_axis[1:]
-                    sign = -1
-                else:
-                    axis = normal_axis
-                    sign = 1
-
-                normal_lookup = {
-                    "x": [1, 0, 0],
-                    "y": [0, 1, 0],
-                    "z": [0, 0, 1]
-                }
-
-                base_normal = normal_lookup.get(axis, [0, 0, 1])  # fallback to z if unknown
-                normal = [sign * n for n in base_normal]
-
-
-                sketch, standalone_sketch = build123.protocol.build_circle(
-                    radius, center, normal
-                )
+                radius, center, normal = compute_circle(x_len, y_len, z_len, (x, y, z), self.extrude_dir)
+                sketch, standalone_sketch = build123.protocol.build_circle(radius, center, normal)
                 self.save_single_sketch(standalone_sketch)
 
             elif op_name == "sketch_triangle":
                 self.ops.append("sketch")
-                # Isosceles triangle centered at (x, y).
-                # Base length = x_len, height = y_len.
-                half_x, half_y = x_len / 2, y_len / 2
-                new_point_list = [
-                    [x - half_x, y - half_y, z],  # left base
-                    [x + half_x, y - half_y, z],  # right base
-                    [x,          y + half_y, z],  # apex
-                ]
-                sketch = build123.protocol.build_sketch(
-                    new_point_list
-                )
-
+                pts = compute_triangle(x_len, y_len, z_len, (x, y, z), self.extrude_dir)
+                sketch = build123.protocol.build_sketch(pts)
                 self.save_single_sketch(sketch)
+
 
             elif op_name == "extrude":
                 self.ops.append("extrude")

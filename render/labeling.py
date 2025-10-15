@@ -523,10 +523,10 @@ if __name__ == "__main__":
 
         # 4) (Optional) Visualizations for the full pass
         # visualize_tree_decomposition(tree, value_map)
-        # vis_components(tree, value_map)
+        vis_components(tree, value_map)
 
         # 5) Overview-only pass: copy the tree + use a separate value_map
         overview_value_map: Dict[str, NumberOrArray] = {}
         _ = compute_tree_values(tree_overview, label_dir, value_map=overview_value_map, is_overview=True)
-        # vis_overview_root(tree_overview, overview_value_map)
-        save_overview_info(current_folder, tree_overview, overview_value_map)
+        vis_overview_root(tree_overview, overview_value_map)
+        # save_overview_info(current_folder, tree_overview, overview_value_map)
