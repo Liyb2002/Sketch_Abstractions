@@ -22,7 +22,7 @@ import graph_utils
 
 def run_once():
     input_dir = Path.cwd().parent / "input"
-    ir_path   = input_dir / "sketch_program_ir_editted.json"
+    ir_path   = input_dir / "sketch_program_ir.json"
 
     # 1) Rescale & execute (this is your "old" assembly before the edit)
     exe_old = rescale_and_execute(input_dir, ir_path)  # Executor
@@ -48,7 +48,13 @@ def run_once():
 
 
     # 4.1) Choose anchors and make them one-hot once
-    anchor_idx_per_comp, _ = graph_utils.best_stroke_for_each_component(C_init, D)
+    # anchor_idx_per_comp, _ = graph_utils.best_stroke_for_each_component(C_init, D)
+
+    anchor_path = input_dir / "anchor_strokes.json"
+    component_names = [c.name for c in components]
+    anchor_idx_per_comp, _ = graph_utils.read_anchor_strokes_json(json_path = anchor_path, num_strokes = D.shape[0], component_names = component_names)
+
+
     C_init_anchored, anchor_mask, _ = graph_utils.make_anchor_onehots(C_init, anchor_idx_per_comp)
     C_init_down, anchor_mask = graph_utils.make_c_down_weight(C_init, anchor_idx_per_comp, scale=0.1)
     # graph_utils.visualize_anchors(perturbed_feature_lines, anchor_mask, title="Anchors (red) & Other Strokes (black)")
@@ -85,9 +91,9 @@ def run_once():
     # graph_utils.plot_strokes_and_program(perturbed_feature_lines, components)
 
     # 6) Visualize initial vs propagated
-    # graph_utils.visualize_strokes_by_confidence(
-    #     perturbed_feature_lines, C_init, components, title="Initial (from distances)"
-    # )
+    graph_utils.visualize_strokes_by_confidence(
+        perturbed_feature_lines, C_init_anchored, components, title="Initial (from distances)"
+    )
 
     
     graph_utils.visualize_strokes_by_confidence(

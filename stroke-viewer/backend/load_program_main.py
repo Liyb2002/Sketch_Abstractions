@@ -17,7 +17,7 @@ __all__ = [
 ROOT = Path(__file__).resolve().parents[1]   # .../stroke-viewer
 INPUT_DIR = ROOT.parent / "input"            # sibling input/
 UI_DIST = ROOT / "dist"                      # vite build output
-DEFAULT_IR = INPUT_DIR / "sketch_program_ir_editted.json"
+DEFAULT_IR = INPUT_DIR / "sketch_program_ir.json"
 
 # -------- Project imports (ensure backend/__init__.py exists) --------
 from backend.shape_optimizer import rescale_and_execute

@@ -953,6 +953,57 @@ def best_stroke_for_each_component(C_init, D=None):
 
 
 
+def read_anchor_strokes_json(json_path, num_strokes, component_names):
+    """
+    Read externally provided anchor strokes from JSON file and return anchors
+    in the same format as best_stroke_for_each_component().
+
+    Args:
+        json_path : Path or str
+            Path to 'anchor_strokes.json' file.
+        num_strokes : int
+            Total number of strokes (N).
+        component_names : list[str]
+            List of cuboid/component names, in the same order as in C_init columns.
+
+    Returns:
+        anchor_idx_per_comp : list[int] length K; -1 if not found for that cuboid
+        anchor_mask         : (N,) bool array; True where the stroke is an anchor
+    """
+    import json
+    import numpy as np
+    from pathlib import Path
+
+    json_path = Path(json_path)
+    if not json_path.exists():
+        raise FileNotFoundError(f"Anchor strokes file not found: {json_path}")
+
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    anchors_data = data.get("anchors", [])
+    if not anchors_data:
+        raise ValueError(f"No 'anchors' found in {json_path}")
+
+    # Build a lookup table from cuboidId → strokeIndex
+    anchor_map = {entry["cuboidId"]: int(entry["strokeIndex"]) for entry in anchors_data}
+
+    K = len(component_names)
+    anchor_idx_per_comp = [-1] * K
+    anchor_mask = np.zeros((num_strokes,), dtype=bool)
+
+    for k, comp_name in enumerate(component_names):
+        if comp_name in anchor_map:
+            idx = anchor_map[comp_name]
+            if 0 <= idx < num_strokes:
+                anchor_idx_per_comp[k] = idx
+                anchor_mask[idx] = True
+            else:
+                print(f"[WARN] Anchor stroke index {idx} out of range for component '{comp_name}'")
+
+    return anchor_idx_per_comp, anchor_mask
+
+
 def propagate_confidences_safe(
     C_init,
     intersect_pairs,
