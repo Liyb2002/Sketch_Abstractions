@@ -8,11 +8,11 @@
   "name": "single_cylindrical_leg",
   "boolean" : "addition",
   "detail_type": "overview",
-  "extrude_dir" : "-z",
   "parameters": {
     "x_length": "parent x_length * [0.3, 0.5]",
     "y_length": "parent y_length",
-    "z_length": [3, 6]
+    "z_length": [3, 6],
+    "normal": ["-z"]
   },
   "quantity": 1,
   "locations": [
@@ -26,7 +26,96 @@
         { "name": "sketch_circle" },
         { "name": "extrude" }
   ]
-}
+},
+
+
+
+
+   {
+      "name": "four_cylindrical_leg",
+        "boolean" : "addition",
+        "detail_type": "overview",
+      "parameters": {
+        "x_length": [0.1, 0.5],
+        "y_length": [0.1, 0.5],
+        "z_length": [3, 6]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_circle" },
+        { "name": "extrude" }
+      ]
+    },
+
+
+   {
+      "name": "four_rectangle_leg",
+      "boolean" : "addition",
+      "detail_type": "overview",
+      "parameters": {
+        "x_length": [0.25, 0.5],
+        "y_length": [0.25, 0.5],
+        "z_length": [2, 5]
+      },
+      "quantity": 4,
+      "locations": [
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "-parent y_length / 2 + y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "-parent x_length / 2 + x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        },
+        {
+          "x_location": "parent x_length / 2 - x_length / 2",
+          "y_location": "parent y_length / 2 - y_length / 2",
+          "z_location": "-z_length"
+        }
+      ],
+      "cad_operations": [
+        { "name": "sketch_rectangle" },
+        { "name": "extrude" },
+        {
+          "name": "fillet_or_chamfer",
+          "probability": 1.0,
+          "sub_parameters": {
+            "radius": "[0.08, 0.15]",
+            "edges": [5,10,6,11]
+          }
+        }
+      ]
+    }
+
 
 
   ]

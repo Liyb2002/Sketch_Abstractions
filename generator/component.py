@@ -214,8 +214,6 @@ class Component:
 
     def build_one_instance(self, idx, location, tempt_canvas):
         
-        print("self.extrude_dir", self.extrude_dir)
-
         if self.name == "root":
             return 
         """

@@ -31,6 +31,8 @@
         "extrude",
         "sketch",
         "extrude",
+        "sketch",
+        "extrude",
         "pattern"
     ],
     "0-1-2": [
@@ -39,19 +41,29 @@
     ],
     "0-2": [
         "sketch",
-        "extrude"
-    ],
-    "0-2-0": [
-        "sketch",
-        "extrude"
-    ],
-    "0-2-1": [
+        "extrude",
+        "fillet",
+        "fillet",
+        "fillet",
+        "fillet",
         "sketch",
         "extrude",
+        "fillet",
+        "fillet",
+        "fillet",
+        "fillet",
         "sketch",
         "extrude",
+        "fillet",
+        "fillet",
+        "fillet",
+        "fillet",
         "sketch",
         "extrude",
+        "fillet",
+        "fillet",
+        "fillet",
+        "fillet",
         "pattern"
     ],
     "0-3": [
